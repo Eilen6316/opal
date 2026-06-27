@@ -4,3 +4,4 @@
  * 后续:ProseMirror 流式选区(flow 锚点)+ word/document.xml 段落级外科写回(复用 writeback-surgical)。
  */
 export * from './redline.js';
+export * from './document.js';
