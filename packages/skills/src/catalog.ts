@@ -39,13 +39,6 @@ export const BUILTIN_SKILLS: SkillCard[] = [
     source: ANTHROPIC,
   },
   {
-    name: 'frontend-design',
-    description: '生成有辨识度、非模板化的前端 UI 设计(排版/配色/动效;避免 AI 千篇一律的“slop”观感)。',
-    formats: ['ui'],
-    keywords: ['前端', 'ui', '设计', '页面', 'frontend', 'design'],
-    source: ANTHROPIC,
-  },
-  {
     name: 'drawio',
     description: 'drawio/流程图的读取与编辑:按 mxCell id 增删改节点与连线、样式与布局。',
     formats: ['drawio'],

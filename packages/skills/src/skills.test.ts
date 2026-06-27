@@ -25,7 +25,7 @@ test('parseSkillMd: 解析 frontmatter + 折叠 description + 正文', () => {
 });
 
 test('内置只放通用技能(格式能力),不含专用模板技能', () => {
-  const universal = ['xlsx', 'docx', 'pptx', 'pdf', 'frontend-design', 'drawio'];
+  const universal = ['xlsx', 'docx', 'pptx', 'pdf', 'drawio'];
   assert.ok(defaultLibrary().all().every((c) => universal.includes(c.name)));
   assert.equal(
     defaultLibrary().match('写课程论文 三线表', 'word').some((c) => c.name === 'academic-paper-docx'),
