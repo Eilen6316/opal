@@ -4,6 +4,7 @@
  */
 export * from './model.js';
 export * from './dialects.js';
+export * from './conventions.js';
 export * from './anthropic.js';
 export * from './openai-compat.js';
 export * from './providers.js';
