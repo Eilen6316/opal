@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-import type { ReactNode } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
 import {
   IconGrid, IconSelect, IconArrow, IconStrike, IconPencil, IconHelp,
   IconFilter, IconFlag, IconSigma, IconPaperclip, IconImage, IconClock,
@@ -357,6 +357,21 @@ const lsSet = (k: string, v: string): void => {
 
 interface Sel { ar: number; ac: number; br: number; bc: number }
 
+/** 单元格格式:功能区按钮真实套用到选中区(B/I/U、颜色、填充、对齐、字体/字号、数字格式)。 */
+interface CellFmt {
+  bold?: boolean;
+  italic?: boolean;
+  underline?: boolean;
+  color?: string;
+  bg?: string;
+  align?: 'left' | 'center' | 'right';
+  numFmt?: string;
+  size?: string;
+  font?: string;
+}
+const FMT_BIU: Record<string, 'bold' | 'italic' | 'underline'> = { B: 'bold', I: 'italic', U: 'underline' };
+const FMT_ALIGN: Record<string, 'left' | 'center' | 'right'> = { 左对齐: 'left', 居中: 'center', 右对齐: 'right' };
+
 function Section({ label, children, defaultOpen = true }: { label: string; children: ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -389,6 +404,7 @@ export function App() {
   const [overrides, setOverrides] = useState<Record<string, string>>({});
   const [editing, setEditing] = useState<{ ri: number; ci: number } | null>(null);
   const [editVal, setEditVal] = useState('');
+  const [styles, setStyles] = useState<Record<string, CellFmt>>({});
   const cellKey = (ri: number, ci: number): string => ri + ',' + ci;
 
   const curProvider = MODEL_PROVIDERS.find((p) => p.id === provider) ?? MODEL_PROVIDERS[0]!;
@@ -423,6 +439,53 @@ export function App() {
   const selCols = c2 - c1 + 1;
   const curFmt = FORMATS.find((f) => f.id === fmt) ?? FORMATS[0];
   const isExcel = fmt === 'excel';
+
+  const selCells = (): string[] => {
+    const out: string[] = [];
+    for (let r = r1; r <= r2; r++) for (let c = c1; c <= c2; c++) out.push(cellKey(r, c));
+    return out;
+  };
+  const applyFmt = (patch: CellFmt): void => {
+    setStyles((prev) => {
+      const next = { ...prev };
+      for (const k of selCells()) next[k] = { ...(next[k] ?? {}), ...patch };
+      return next;
+    });
+  };
+  const toggleFmt = (key: 'bold' | 'italic' | 'underline'): void => {
+    setStyles((prev) => {
+      const next = { ...prev };
+      for (const k of selCells()) {
+        const c = next[k] ?? {};
+        next[k] = { ...c, [key]: !c[key] };
+      }
+      return next;
+    });
+  };
+  const cellFmtStyle = (ri: number, ci: number): CSSProperties => {
+    const s = styles[cellKey(ri, ci)];
+    if (!s) return {};
+    return {
+      fontWeight: s.bold ? 700 : undefined,
+      fontStyle: s.italic ? 'italic' : undefined,
+      textDecoration: s.underline ? 'underline' : undefined,
+      color: s.color,
+      background: s.bg,
+      textAlign: s.align,
+      fontFamily: s.font,
+      fontSize: s.size ? `${s.size}px` : undefined,
+    };
+  };
+  const fmtValue = (raw: string, nf?: string): string => {
+    if (!nf || !raw) return raw;
+    if (nf === '货币') return '¥' + raw;
+    if (nf === '百分比') return /%$/.test(raw) ? raw : raw + '%';
+    if (nf === '千分位') {
+      const n = Number(raw);
+      return Number.isFinite(n) ? n.toLocaleString('en-US') : raw;
+    }
+    return raw;
+  };
 
   const gridValue = (ri: number, ci: number): string => {
     const ov = overrides[cellKey(ri, ci)];
@@ -477,7 +540,7 @@ export function App() {
         onMouseDown={(e) => e.stopPropagation()}
       />
     ) : (
-      t(gridValue(ri, ci))
+      fmtValue(t(gridValue(ri, ci)), styles[cellKey(ri, ci)]?.numFmt)
     );
 
   const selectionContext = (): string => {
@@ -502,12 +565,30 @@ export function App() {
     if (toastTimer.current) clearTimeout(toastTimer.current);
     toastTimer.current = setTimeout(() => setToast(null), 1600);
   };
-  /** 每个功能都可用:有下拉的开面板,其余给执行反馈。 */
+  /** 每个功能都可用:格式化命令真实套用到选区,有下拉的开面板,其余给执行反馈。 */
   const act = (it: string, el: HTMLElement): void => {
+    if (isExcel && FMT_BIU[it]) {
+      toggleFmt(FMT_BIU[it]);
+      notify(t('执行') + ' · ' + t(it));
+      return;
+    }
+    if (isExcel && FMT_ALIGN[it]) {
+      applyFmt({ align: FMT_ALIGN[it] });
+      notify(t('执行') + ' · ' + t(it));
+      return;
+    }
     if (DROPDOWNS[it]) openDrop(it, el);
     else notify(t('执行') + ' · ' + t(it));
   };
   const pick = (v: string): void => {
+    const key = drop?.key;
+    if (isExcel && key) {
+      if (key === '字体颜色') applyFmt({ color: v });
+      else if (key === '填充色' || key === '突出显示') applyFmt({ bg: v });
+      else if (key === '常规') applyFmt({ numFmt: v });
+      else if (key === '字号') applyFmt({ size: v });
+      else if (key === '字体') applyFmt({ font: v });
+    }
     notify(t('应用') + ' · ' + t(v));
     setDrop(null);
   };
@@ -617,6 +698,7 @@ export function App() {
                         <td
                           key={ci}
                           className={('name ' + cellClass(0, ci)).trim()}
+                          style={cellFmtStyle(0, ci)}
                           onMouseDown={() => onDown(0, ci)}
                           onMouseEnter={() => onEnter(0, ci)}
                           onDoubleClick={() => beginEdit(0, ci)}
@@ -634,6 +716,7 @@ export function App() {
                             <td
                               key={ci}
                               className={cellClass(ri, ci)}
+                              style={cellFmtStyle(ri, ci)}
                               onMouseDown={() => onDown(ri, ci)}
                               onMouseEnter={() => onEnter(ri, ci)}
                               onDoubleClick={() => beginEdit(ri, ci)}
