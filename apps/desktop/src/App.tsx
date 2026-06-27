@@ -262,6 +262,41 @@ const DROPDOWNS: Record<string, Drop> = {
   主题: { type: 'gallery', title: '主题', cells: [{ label: 'Office' }, { label: '切片' }, { label: '丝状' }, { label: '回顾' }, { label: '基础' }, { label: '木头型' }] },
 };
 
+/** 大按钮(图标在上 + 标签 + ▾):Office 里突出的功能;其余默认小按钮(仅图标)。 */
+const BIG = new Set<string>([
+  '粘贴', '条件格式', '套用表格格式', '单元格样式', '插入', '删除', '格式', '自动求和', '排序和筛选', '查找和选择',
+  '数据透视表', '推荐的数据透视表', '表格', '主题', '拼写检查', '获取数据', '全部刷新', '名称管理器', '插入函数',
+  '目录', '修订', '保护工作表', '模拟分析', '删除重复值', '数据验证', 'SmartArt', '分类汇总', '页边距', '图表',
+  '新建幻灯片', '版式',
+]);
+/** 组合框(显示当前值 + ▾):字体 / 字号 / 数字格式。 */
+const COMBO: Record<string, string> = { 字体: '宋体', 字号: '11', 常规: '常规' };
+
+type Cell = { t: 'combo'; it: string } | { t: 'big'; it: string } | { t: 'small'; items: string[] };
+function buildCells(items: string[]): Cell[] {
+  const cells: Cell[] = [];
+  let run: string[] = [];
+  const flush = (): void => {
+    if (run.length) {
+      cells.push({ t: 'small', items: run });
+      run = [];
+    }
+  };
+  for (const it of items) {
+    if (COMBO[it]) {
+      flush();
+      cells.push({ t: 'combo', it });
+    } else if (BIG.has(it)) {
+      flush();
+      cells.push({ t: 'big', it });
+    } else {
+      run.push(it);
+    }
+  }
+  flush();
+  return cells;
+}
+
 const PLACEHOLDERS: Record<Fmt, string> = {
   excel: '圈一块区域,说说你想怎么改…',
   word: '选中文字,说说你想怎么改…',
@@ -453,6 +488,11 @@ export function App() {
     void selectionContext();
     setSent(true);
   };
+  const openDrop = (it: string, el: HTMLElement): void => {
+    if (!DROPDOWNS[it]) return;
+    const r = el.getBoundingClientRect();
+    setDrop({ key: it, x: Math.min(r.left, window.innerWidth - 250), y: r.bottom + 3 });
+  };
 
   return (
     <div className="app">
@@ -497,33 +537,20 @@ export function App() {
             <div className="ribbon-bar">
               {(RIBBONS[fmt][tab] ?? RIBBONS[fmt][0]!).groups.map((g) => (
                 <div className="rgroup" key={g.name}>
-                  <div className="ritems">
-                    {g.items.map((it) => {
-                      const d = DROPDOWNS[it];
-                      const biu = it === 'B' || it === 'I' || it === 'U';
-                      const Ico = FUNC_ICONS[it];
-                      const accent = it === '字体颜色' ? ' ic-red' : it === '填充色' || it === '突出显示' ? ' ic-amber' : '';
-                      return (
-                        <button
-                          className={'ritem' + (biu ? ' biu biu-' + it.toLowerCase() : '') + accent}
-                          key={it}
-                          title={it}
-                          onClick={(e) => {
-                            if (!d) return;
-                            const r = e.currentTarget.getBoundingClientRect();
-                            setDrop({ key: it, x: Math.min(r.left, window.innerWidth - 250), y: r.bottom + 3 });
-                          }}
-                        >
-                          {Ico && !biu ? (
-                            <span className="ricon">
-                              <Ico size={15} />
-                            </span>
-                          ) : null}
-                          <span className="rlabel">{it}</span>
-                          {d ? <span className="caret">▾</span> : null}
-                        </button>
-                      );
-                    })}
+                  <div className="rgbody">
+                    {buildCells(g.items).map((cell, ci) =>
+                      cell.t === 'combo' ? (
+                        <ComboCell key={ci} it={cell.it} onOpen={openDrop} />
+                      ) : cell.t === 'big' ? (
+                        <BigCell key={ci} it={cell.it} onOpen={openDrop} />
+                      ) : (
+                        <div className="rsmall-grid" key={ci}>
+                          {cell.items.map((it) => (
+                            <SmallCell key={it} it={it} onOpen={openDrop} />
+                          ))}
+                        </div>
+                      ),
+                    )}
                   </div>
                   <div className="rgname">{g.name}</div>
                 </div>
@@ -801,5 +828,41 @@ function Change(props: { tag: string; title: string; before: string; after: stri
         <button className="btn no"><IconX size={14} /> 拒绝</button>
       </div>
     </div>
+  );
+}
+
+type OnOpen = (it: string, el: HTMLElement) => void;
+
+function SmallCell({ it, onOpen }: { it: string; onOpen: OnOpen }) {
+  const Ico = FUNC_ICONS[it];
+  const biu = it === 'B' || it === 'I' || it === 'U';
+  const accent = it === '字体颜色' ? ' ic-red' : it === '填充色' || it === '突出显示' ? ' ic-amber' : '';
+  return (
+    <button className={'rs' + (biu ? ' biu biu-' + it.toLowerCase() : '') + accent} title={it} onClick={(e) => onOpen(it, e.currentTarget)}>
+      {biu ? it : Ico ? <Ico size={15} /> : it.slice(0, 1)}
+      {DROPDOWNS[it] ? <span className="caret">▾</span> : null}
+    </button>
+  );
+}
+
+function BigCell({ it, onOpen }: { it: string; onOpen: OnOpen }) {
+  const Ico = FUNC_ICONS[it];
+  return (
+    <button className="rbig" title={it} onClick={(e) => onOpen(it, e.currentTarget)}>
+      <span className="rbig-ic">{Ico ? <Ico size={20} /> : null}</span>
+      <span className="rbig-lb">
+        {it}
+        {DROPDOWNS[it] ? ' ▾' : ''}
+      </span>
+    </button>
+  );
+}
+
+function ComboCell({ it, onOpen }: { it: string; onOpen: OnOpen }) {
+  return (
+    <button className="rcombo" title={it} onClick={(e) => onOpen(it, e.currentTarget)}>
+      <span className="rc-val">{COMBO[it]}</span>
+      <span className="caret">▾</span>
+    </button>
   );
 }
