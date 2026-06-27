@@ -6,6 +6,7 @@
     { "path": "packages/agent" },
     { "path": "packages/adapter-univer" },
     { "path": "packages/adapter-drawio" },
+    { "path": "packages/adapter-word" },
     { "path": "packages/writeback-surgical" }
   ]
 }
