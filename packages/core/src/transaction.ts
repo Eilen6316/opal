@@ -1,7 +1,7 @@
 /**
  * 并发内核 —— SuggestionTransaction 状态机 + Git 三路 rebase + 单写者提交队列。
  * 人↔Agent 协作不可降级为"最后写赢"。复用统一的 AnchorService.rebase。
- * 详见 ../../../abstraction-layer.md §6。
+ * 详见 .work/abstraction-layer.md §6。
  */
 import type { AnchorId, DocRev, MutationLog } from './anchor.js';
 import type { ChangeOrigin, ChangeSet, Edit, ShadowResult } from './changeset.js';

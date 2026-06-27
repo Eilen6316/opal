@@ -1,7 +1,7 @@
 /**
  * 技能 Skill —— SKILL.md 兼容 + 渐进披露(L0/L1/L2)。
  * requires 能力闸门 = 跨底座复用;脚本/示范一律产 ChangeSet;asMcpTools = 技能即基础设施。
- * 详见 ../../../abstraction-layer.md §4。
+ * 详见 .work/abstraction-layer.md §4。
  */
 import type { AnchorKind, DocRev, LogicalAnchor } from './anchor.js';
 import type {

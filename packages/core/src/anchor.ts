@@ -1,7 +1,7 @@
 /**
  * SemanticAnchor —— 抽象层的"位置"货币。
  * 身份透明、寻址不透明(opaque ref)、漂移单点收敛(唯一 rebase)。
- * 详见 ../../../abstraction-layer.md §1。
+ * 详见 .work/abstraction-layer.md §1。
  */
 
 export type HostId = string & { readonly __brand: 'HostId' };

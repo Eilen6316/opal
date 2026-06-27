@@ -1,7 +1,7 @@
 /**
  * 写回保真 —— 可插拔后端 + 逐 edit 路由 + 自动降级 + verify。
  * 实测:外科补丁(surgical-ooxml)在真实 .docx 上 30/31 部件字节级不变;模型往返重写 11/31。
- * 详见 ../../../abstraction-layer.md §7 与 ../../../kill-experiments.md。
+ * 详见 .work/abstraction-layer.md §7 与 .work/kill-experiments.md。
  */
 import type { DocRev } from './anchor.js';
 import type { ChangeSet, EditId, EditOpKind } from './changeset.js';

@@ -1,7 +1,7 @@
 /**
  * ChangeSet + EditOp —— 唯一的"编辑"货币。
  * 任何来源(Agent/技能/示范/人工)都只产 ChangeSet;通过 AnchorId 寻址。
- * 详见 ../../../abstraction-layer.md §2。
+ * 详见 .work/abstraction-layer.md §2。
  */
 import type { AnchorId, DocRev, LogicalAnchor, MutationLog } from './anchor.js';
 import type { DiffView } from './diff.js';

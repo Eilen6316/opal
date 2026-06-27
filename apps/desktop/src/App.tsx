@@ -1,7 +1,7 @@
 import { useState } from 'react';
 
 /**
- * 渐进披露驾驶舱(design.md §6)。
+ * 渐进披露驾驶舱(.work/design.md §6)。
  * 默认只露"选区上下文 + 说想法";点"发送"后才展开计划 / 待提交 / PR 式 diff 卡片 / 接受拒绝。
  * 这是 UI 骨架 —— 左侧 Office 画布与右侧管线后续接 @office-agent/core + adapter-univer。
  */

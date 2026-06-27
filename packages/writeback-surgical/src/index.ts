@@ -7,7 +7,7 @@
  *  - "ChangeSet → 哪些部件、改成什么 XML" 的知识由格式适配器以 OoxmlPatchCompiler 注入
  *    (Univer 知道 setValue 落到 xl/worksheets/sheetN.xml 的哪个 cell;Word 适配器知道 run 怎么改)。
  *
- * 详见 ../../../abstraction-layer.md §7。
+ * 详见 .work/abstraction-layer.md §7。
  */
 import type {
   ChangeSet,

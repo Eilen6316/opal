@@ -9,6 +9,8 @@ out/
 .DS_Store
 .vscode/
 .idea/
+# internal design / planning docs — local reference only, not published
+.work/
 # experiment scratch outputs (keep the script, ignore generated docs)
 experiments/_*.docx
 experiments/_*.xlsx

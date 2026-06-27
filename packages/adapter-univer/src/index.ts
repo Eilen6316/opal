@@ -9,7 +9,7 @@
  *  - overlay():  在 Univer canvas 之上挂自建绝对定位 SVG 覆盖层(圈选/红笔/diff 高亮)。
  *  - writebacks(): 交给 @office-agent/writeback-surgical(外科补丁)。
  *
- * 详见 ../../../abstraction-layer.md §5、§9(MVP 最小子集)。
+ * 详见 .work/abstraction-layer.md §5、§9(MVP 最小子集)。
  */
 import type {
   AnchorService,

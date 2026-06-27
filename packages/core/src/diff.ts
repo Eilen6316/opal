@@ -1,7 +1,7 @@
 /**
  * Diff —— 三级粒度可审阅结构(batch / block / leaf)。
  * shadowApply 产出 DiffNode 树;每节点可独立接受/拒绝/回滚;接受子集 project() 成新 ChangeSet 再提交。
- * 详见 ../../../abstraction-layer.md §3。
+ * 详见 .work/abstraction-layer.md §3。
  */
 import type { LogicalAnchor } from './anchor.js';
 import type {

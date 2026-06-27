@@ -1,7 +1,7 @@
 /**
  * 适配器契约 + 能力协商 —— 唯一"窄腰"。
  * 新增底座/格式 = 只实现一个 HostAdapter。能力协商前置到 list()/validate(总闸门)。
- * 详见 ../../../abstraction-layer.md §5。
+ * 详见 .work/abstraction-layer.md §5。
  */
 import type {
   AnchorKind,
