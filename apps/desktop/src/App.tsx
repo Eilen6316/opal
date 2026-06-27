@@ -18,35 +18,195 @@ const FORMATS = [
 ] as const;
 type Fmt = (typeof FORMATS)[number]['id'];
 
-/** 每种格式对应的工具栏(菜单栏随工作区格式而变)。 */
-const TOOLSETS: Record<Fmt, Array<{ Icon: typeof IconSelect; label: string }>> = {
+/** 仿 Office 功能区:选项卡 → 分组(模块)→ 功能。菜单栏随工作区格式联动。 */
+interface RibGroup { name: string; items: string[] }
+interface RibTab { name: string; groups: RibGroup[] }
+
+const RIBBONS: Record<Fmt, RibTab[]> = {
   excel: [
-    { Icon: IconSelect, label: '圈选区域' },
-    { Icon: IconSigma, label: '求和/统计' },
-    { Icon: IconPencil, label: '公式' },
-    { Icon: IconFilter, label: '排序筛选' },
-    { Icon: IconFlag, label: '标记异常' },
+    {
+      name: '开始',
+      groups: [
+        { name: '剪贴板', items: ['粘贴', '剪切', '复制', '格式刷'] },
+        { name: '字体', items: ['字体', '字号', 'B', 'I', 'U', '边框', '填充色', '字体颜色'] },
+        { name: '对齐方式', items: ['左对齐', '居中', '右对齐', '顶端对齐', '自动换行', '合并后居中', '增加缩进'] },
+        { name: '数字', items: ['常规', '货币', '百分比', '千分位', '增加小数', '减少小数'] },
+        { name: '样式', items: ['条件格式', '套用表格格式', '单元格样式'] },
+        { name: '单元格', items: ['插入', '删除', '格式'] },
+        { name: '编辑', items: ['自动求和', '填充', '清除', '排序和筛选', '查找和选择'] },
+      ],
+    },
+    {
+      name: '插入',
+      groups: [
+        { name: '表格', items: ['数据透视表', '推荐的数据透视表', '表格'] },
+        { name: '插图', items: ['图片', '形状', '图标', 'SmartArt', '屏幕截图'] },
+        { name: '图表', items: ['推荐的图表', '柱形图', '折线图', '饼图', '数据透视图'] },
+        { name: '迷你图', items: ['折线', '柱形', '盈亏'] },
+        { name: '筛选器', items: ['切片器', '日程表'] },
+        { name: '文本', items: ['文本框', '页眉和页脚', '艺术字', '对象'] },
+        { name: '符号', items: ['公式', '符号'] },
+      ],
+    },
+    {
+      name: '页面布局',
+      groups: [
+        { name: '主题', items: ['主题', '颜色', '字体', '效果'] },
+        { name: '页面设置', items: ['页边距', '纸张方向', '纸张大小', '打印区域', '分隔符', '背景', '打印标题'] },
+        { name: '调整为合适大小', items: ['宽度', '高度', '缩放比例'] },
+        { name: '工作表选项', items: ['网格线', '标题'] },
+        { name: '排列', items: ['上移一层', '下移一层', '对齐', '组合', '旋转'] },
+      ],
+    },
+    {
+      name: '公式',
+      groups: [
+        { name: '函数库', items: ['插入函数', '自动求和', '财务', '逻辑', '文本', '日期和时间', '查找与引用', '数学和三角', '其他函数'] },
+        { name: '定义的名称', items: ['名称管理器', '定义名称', '根据所选内容创建'] },
+        { name: '公式审核', items: ['追踪引用单元格', '追踪从属单元格', '显示公式', '错误检查', '公式求值'] },
+        { name: '计算', items: ['计算选项', '开始计算', '计算工作表'] },
+      ],
+    },
+    {
+      name: '数据',
+      groups: [
+        { name: '获取和转换数据', items: ['获取数据', '从文本/CSV', '自网站', '来自表格/区域', '现有连接'] },
+        { name: '查询和连接', items: ['全部刷新', '查询和连接', '属性'] },
+        { name: '排序和筛选', items: ['升序', '降序', '排序', '筛选', '清除', '高级'] },
+        { name: '数据工具', items: ['分列', '快速填充', '删除重复值', '数据验证', '合并计算'] },
+        { name: '预测', items: ['模拟分析', '预测工作表'] },
+        { name: '分级显示', items: ['组合', '取消组合', '分类汇总'] },
+      ],
+    },
+    {
+      name: '审阅',
+      groups: [
+        { name: '校对', items: ['拼写检查'] },
+        { name: '批注', items: ['新建批注', '显示批注', '删除'] },
+        { name: '保护', items: ['保护工作表', '保护工作簿'] },
+      ],
+    },
+    {
+      name: '视图',
+      groups: [
+        { name: '工作簿视图', items: ['普通', '分页预览', '页面布局'] },
+        { name: '显示', items: ['网格线', '编辑栏', '标题'] },
+        { name: '缩放', items: ['缩放', '100%', '缩放到选定区域'] },
+        { name: '窗口', items: ['新建窗口', '全部重排', '冻结窗格', '拆分'] },
+      ],
+    },
   ],
   word: [
-    { Icon: IconSelect, label: '选择文字' },
-    { Icon: IconPencil, label: '加粗/样式' },
-    { Icon: IconDoc, label: '标题层级' },
-    { Icon: IconHelp, label: '批注' },
-    { Icon: IconStrike, label: '修订红线' },
+    {
+      name: '开始',
+      groups: [
+        { name: '剪贴板', items: ['粘贴', '剪切', '复制', '格式刷'] },
+        { name: '字体', items: ['字体', '字号', '增大字号', '减小字号', '拼音指南', '清除格式', 'B', 'I', 'U', '删除线', '下标', '上标', '文本效果', '突出显示', '字体颜色'] },
+        { name: '段落', items: ['项目符号', '编号', '多级列表', '减少缩进', '增加缩进', '中文版式', '排序', '左对齐', '居中', '右对齐', '两端对齐', '行距', '底纹', '边框'] },
+        { name: '样式', items: ['正文', '无间隔', '标题1', '标题2', '标题3', '标题', '副标题'] },
+        { name: '编辑', items: ['查找', '替换', '选择'] },
+      ],
+    },
+    {
+      name: '插入',
+      groups: [
+        { name: '页面', items: ['封面', '空白页', '分页'] },
+        { name: '表格', items: ['表格'] },
+        { name: '插图', items: ['图片', '形状', '图标', 'SmartArt', '图表', '屏幕截图'] },
+        { name: '链接', items: ['链接', '书签', '交叉引用'] },
+        { name: '批注', items: ['批注'] },
+        { name: '页眉和页脚', items: ['页眉', '页脚', '页码'] },
+        { name: '文本', items: ['文本框', '文档部件', '艺术字', '首字下沉', '签名行', '日期和时间', '对象'] },
+        { name: '符号', items: ['公式', '符号', '编号'] },
+      ],
+    },
+    {
+      name: '布局',
+      groups: [
+        { name: '页面设置', items: ['文字方向', '页边距', '纸张方向', '纸张大小', '栏', '分隔符', '行号', '断字'] },
+        { name: '稿纸', items: ['稿纸设置'] },
+        { name: '段落', items: ['左缩进', '右缩进', '段前间距', '段后间距'] },
+        { name: '排列', items: ['位置', '环绕文字', '上移一层', '下移一层', '选择窗格', '对齐', '组合', '旋转'] },
+      ],
+    },
+    {
+      name: '引用',
+      groups: [
+        { name: '目录', items: ['目录', '添加文字', '更新目录'] },
+        { name: '脚注', items: ['插入脚注', '插入尾注', '下一条脚注', '显示备注'] },
+        { name: '引文与书目', items: ['插入引文', '管理源', '样式', '书目'] },
+        { name: '题注', items: ['插入题注', '插入表目录', '交叉引用'] },
+        { name: '索引', items: ['标记条目', '插入索引', '更新索引'] },
+      ],
+    },
+    {
+      name: '审阅',
+      groups: [
+        { name: '校对', items: ['拼写和语法', '字数统计'] },
+        { name: '批注', items: ['新建批注', '删除', '上一条', '下一条'] },
+        { name: '修订', items: ['修订', '显示标记', '接受', '拒绝'] },
+      ],
+    },
+    {
+      name: '视图',
+      groups: [
+        { name: '视图', items: ['阅读视图', '页面视图', 'Web 版式', '大纲'] },
+        { name: '显示', items: ['标尺', '网格线', '导航窗格'] },
+        { name: '缩放', items: ['缩放', '100%', '单页', '多页'] },
+      ],
+    },
   ],
   ppt: [
-    { Icon: IconSelect, label: '选择对象' },
-    { Icon: IconDoc, label: '文本框' },
-    { Icon: IconGrid, label: '形状' },
-    { Icon: IconImage, label: '图片' },
-    { Icon: IconFlag, label: '版式' },
+    {
+      name: '开始',
+      groups: [
+        { name: '幻灯片', items: ['新建幻灯片', '版式', '重置', '节'] },
+        { name: '字体', items: ['字体', '字号', 'B', 'I', 'U', '字体颜色'] },
+        { name: '段落', items: ['项目符号', '编号', '对齐', '行距', '转换为 SmartArt'] },
+        { name: '绘图', items: ['形状', '排列', '快速样式', '填充', '轮廓'] },
+      ],
+    },
+    {
+      name: '插入',
+      groups: [
+        { name: '图像', items: ['图片', '屏幕截图', '相册'] },
+        { name: '插图', items: ['形状', 'SmartArt', '图表', '图标'] },
+        { name: '文本', items: ['文本框', '页眉和页脚', '艺术字'] },
+        { name: '媒体', items: ['视频', '音频'] },
+      ],
+    },
+    {
+      name: '设计',
+      groups: [
+        { name: '主题', items: ['主题', '变体'] },
+        { name: '自定义', items: ['幻灯片大小', '设置背景格式'] },
+      ],
+    },
   ],
   drawio: [
-    { Icon: IconSelect, label: '选择' },
-    { Icon: IconPlus, label: '添加节点' },
-    { Icon: IconArrow, label: '连线' },
-    { Icon: IconPencil, label: '样式' },
-    { Icon: IconGrid, label: '布局' },
+    {
+      name: '开始',
+      groups: [
+        { name: '工具', items: ['选择', '添加节点', '连线', '文本', '自由绘制'] },
+        { name: '样式', items: ['填充色', '线条', '字体', '圆角', '阴影'] },
+        { name: '形状库', items: ['通用', '流程图', 'UML', '云架构'] },
+      ],
+    },
+    {
+      name: '排列',
+      groups: [
+        { name: '对齐', items: ['左对齐', '水平居中', '右对齐', '顶对齐', '垂直居中', '底对齐'] },
+        { name: '布局', items: ['水平树', '垂直树', '有机布局', '圆形布局'] },
+        { name: '层次', items: ['上移一层', '下移一层', '置于顶层', '置于底层', '组合'] },
+      ],
+    },
+    {
+      name: '插入',
+      groups: [
+        { name: '元素', items: ['形状', '图片', '连线', '模板'] },
+        { name: '导入', items: ['从 CSV', '从 Mermaid'] },
+      ],
+    },
   ],
 };
 const PLACEHOLDERS: Record<Fmt, string> = {
@@ -122,6 +282,7 @@ function Section({ label, children, defaultOpen = true }: { label: string; child
 export function App() {
   const [sent, setSent] = useState(false);
   const [fmt, setFmt] = useState<Fmt>('excel');
+  const [tab, setTab] = useState(0);
   const [intent, setIntent] = useState('');
   const [cfgOpen, setCfgOpen] = useState(false);
   const [provider, setProvider] = useState(() => lsGet('oa.provider', 'claude'));
@@ -248,7 +409,14 @@ export function App() {
         </div>
         <div className="fmttabs">
           {FORMATS.map((f) => (
-            <button key={f.id} className={'fmttab' + (f.id === fmt ? ' on' : '')} onClick={() => setFmt(f.id)}>
+            <button
+              key={f.id}
+              className={'fmttab' + (f.id === fmt ? ' on' : '')}
+              onClick={() => {
+                setFmt(f.id);
+                setTab(0);
+              }}
+            >
               {f.label}
             </button>
           ))}
@@ -264,17 +432,28 @@ export function App() {
 
       <main className="body">
         <section className="editor">
-          <div className="toolbar">
-            {TOOLSETS[fmt].map((t, i) => {
-              const Ico = t.Icon;
-              return (
-                <button key={t.label} className={'tool' + (i === 0 ? ' active' : '')} title={t.label}>
-                  <Ico size={18} />
+          <div className="ribbon">
+            <div className="ribbon-tabs">
+              {RIBBONS[fmt].map((t, i) => (
+                <button key={t.name} className={'rtab' + (i === tab ? ' on' : '')} onClick={() => setTab(i)}>
+                  {t.name}
                 </button>
-              );
-            })}
-            <span className="div" />
-            <button className="tool" title="撤销"><IconUndo size={18} /></button>
+              ))}
+            </div>
+            <div className="ribbon-bar">
+              {(RIBBONS[fmt][tab] ?? RIBBONS[fmt][0]!).groups.map((g) => (
+                <div className="rgroup" key={g.name}>
+                  <div className="ritems">
+                    {g.items.map((it) => (
+                      <button className="ritem" key={it} title={it}>
+                        {it}
+                      </button>
+                    ))}
+                  </div>
+                  <div className="rgname">{g.name}</div>
+                </div>
+              ))}
+            </div>
           </div>
           <div className="canvas">
             {isExcel ? (
