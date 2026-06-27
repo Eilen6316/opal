@@ -12,6 +12,10 @@
     }
   },
   "scripts": {
-    "build": "tsc -b"
+    "build": "tsc -b",
+    "test": "node --import tsx --test src/registry.test.ts"
+  },
+  "devDependencies": {
+    "tsx": "^4.19.0"
   }
 }

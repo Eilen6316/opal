@@ -10,3 +10,4 @@ export * from './adapter.js';
 export * from './transaction.js';
 export * from './writeback.js';
 export * from './skill.js';
+export * from './registry.js';

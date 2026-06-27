@@ -67,6 +67,10 @@ export type EditOp =
   // PPT(object)扩展(后续)
   | { family: 'object'; kind: 'moveObject'; box: Partial<BoxRect> }
   | { family: 'object'; kind: 'setObjectProps'; props: Record<string, unknown> }
+  // 增删对象(drawio/PPT):addObject 的 target=父/容器锚点,payload 由适配器解释(如 drawio 的 mxCell);
+  // deleteObject 的 target 锚点指向被删对象(drawio 级联删边)。
+  | { family: 'object'; kind: 'addObject'; payload: unknown }
+  | { family: 'object'; kind: 'deleteObject' }
   // 逃生舱:携带某底座原生 op,必须 CapabilitySet 显式放行 + 强制随附 inverse
   | { family: 'raw'; kind: 'rawHost'; hostId: string; payload: unknown };
 

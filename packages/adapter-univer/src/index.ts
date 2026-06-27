@@ -12,6 +12,7 @@
  * 详见 .work/abstraction-layer.md §5、§9(MVP 最小子集)。
  */
 import type {
+  AdapterRegistration,
   AnchorService,
   ChangeSetEngine,
   CapabilitySet,
@@ -80,3 +81,10 @@ export class UniverAdapter implements HostAdapter {
     /* no-op */
   }
 }
+
+/** 注册项:把 Excel(Univer)接入 AdapterRegistry。app 启动时 registry.register(univerAdapterRegistration)。 */
+export const univerAdapterRegistration: AdapterRegistration = {
+  format: 'excel',
+  engines: ['univer'],
+  create: (hostId) => new UniverAdapter(hostId),
+};
