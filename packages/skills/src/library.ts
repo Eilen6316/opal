@@ -2,7 +2,7 @@
  * SkillLibrary —— 技能中枢:按格式 + 意图匹配技能,渲染成可注入系统提示的片段(渐进披露 L0),
  * 也可导出为 MCP 工具清单("技能即基础设施")。
  */
-import type { SkillCard } from './parse.js';
+import { parseSkillMd, type SkillCard } from './parse.js';
 
 export class SkillLibrary {
   private readonly cards: SkillCard[] = [];
@@ -20,6 +20,13 @@ export class SkillLibrary {
 
   all(): readonly SkillCard[] {
     return this.cards;
+  }
+
+  /** 安装一个外部专用技能(SKILL.md 文本)。宿主从目录/URL 读到内容后调用。 */
+  install(md: string, source?: string): SkillCard {
+    const card = parseSkillMd(md, source);
+    this.add(card);
+    return card;
   }
 
   /** 按格式(强信号)+ 意图关键词(弱信号)排序,返回命中技能。 */

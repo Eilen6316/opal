@@ -24,20 +24,33 @@ test('parseSkillMd: 解析 frontmatter + 折叠 description + 正文', () => {
   assert.equal(c.source, 'fixture');
 });
 
-test('SkillLibrary.match: 按格式 + 意图排序', () => {
-  const lib = defaultLibrary();
-  const word = lib.match('帮我把论文按三线表排版生成 docx', 'word');
-  assert.ok(word.length > 0);
-  assert.equal(word[0]!.name, 'academic-paper-docx'); // 格式 + 关键词双命中,排第一
+test('内置只放通用技能(格式能力),不含专用模板技能', () => {
+  const universal = ['xlsx', 'docx', 'pptx', 'pdf', 'frontend-design', 'drawio'];
+  assert.ok(defaultLibrary().all().every((c) => universal.includes(c.name)));
+  assert.equal(
+    defaultLibrary().match('写课程论文 三线表', 'word').some((c) => c.name === 'academic-paper-docx'),
+    false,
+  );
+});
 
-  const excel = lib.match('把这张表的金额列补齐', 'excel');
-  assert.equal(excel[0]!.name, 'xlsx');
+test('专用技能从外部 SKILL.md 安装后即可命中', () => {
+  const lib = defaultLibrary();
+  const card = lib.install(SKILL_MD, 'user:SKILL_HUB');
+  assert.equal(card.name, 'academic-paper-docx');
+  // 安装后,论文+三线表意图命中专用技能(格式 + 关键词双命中,胜过通用 docx)
+  assert.equal(lib.match('写课程论文 三线表', 'word')[0]!.name, 'academic-paper-docx');
+});
+
+test('SkillLibrary.match: 按格式 + 意图排序(内置通用)', () => {
+  const lib = defaultLibrary();
+  assert.equal(lib.match('把这张表的金额列补齐', 'excel')[0]!.name, 'xlsx');
+  assert.equal(lib.match('把这个 word 文档排版一下', 'word')[0]!.name, 'docx');
 });
 
 test('SkillLibrary.render: 生成可注入系统提示的片段', () => {
-  const snip = defaultLibrary().render('word', '写一篇课程论文');
+  const snip = defaultLibrary().render('word', '排版这个文档');
   assert.match(snip, /可用技能/);
-  assert.match(snip, /academic-paper-docx/);
+  assert.match(snip, /docx/);
 });
 
 test('add 去重 + toMcpTools', () => {

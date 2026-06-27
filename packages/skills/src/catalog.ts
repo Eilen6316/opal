@@ -1,7 +1,8 @@
 /**
- * 内置技能目录。Anthropic Agent Skills(读改/生成 Office)+ 用户的 academic-paper-docx。
- * 这些是 L0 卡片(name/description/formats/keywords);完整 SKILL.md 正文(L1)可由
- * parseSkillMd 从对应仓库/本地目录加载后 add 进来(instructions 字段)。
+ * 内置技能目录 —— 只放【通用能力技能】(操作某格式 / 跨场景人人都要的能力)。
+ * 判定:编辑该格式的用户多数都需要 → 内置;领域/模板/地区/行业特定(如学术论文模板、
+ * 公司周报、投行模型)→ 不内置,由用户从外部 SKILL.md 安装(SkillLibrary.install)。
+ * 安全:内置默认可信;外部技能(可能带 L2 脚本)需沙箱 + 安装前显式信任。
  */
 import type { SkillCard } from './parse.js';
 import { SkillLibrary } from './library.js';
@@ -45,17 +46,15 @@ export const BUILTIN_SKILLS: SkillCard[] = [
     source: ANTHROPIC,
   },
   {
-    name: 'academic-paper-docx',
-    description:
-      '把中文学术论文(摘要/多级标题/三线表/图/参考文献/封皮)程序化生成为排版规范的 Word(.docx)再转 PDF;' +
-      '附 python-docx 工具箱(eastAsia 宋体、固定行距、三线表、统计输出转图、docx→pdf)。适合课程论文/期末大作业/实证报告。',
-    formats: ['word', 'docx'],
-    keywords: ['论文', '学术', '三线表', '宋体', 'eastasia', 'python-docx', 'docx', 'pdf', '实证', '大作业'],
-    source: 'user:SKILL_HUB/academic-paper-docx',
+    name: 'drawio',
+    description: 'drawio/流程图的读取与编辑:按 mxCell id 增删改节点与连线、样式与布局。',
+    formats: ['drawio'],
+    keywords: ['drawio', '流程图', '图', '节点', '连线', 'diagram'],
+    source: 'opal',
   },
 ];
 
-/** 带内置目录的技能库。 */
+/** 带内置(通用)目录的技能库。专用技能请 lib.install(SKILL.md 文本) 自行加载。 */
 export function defaultLibrary(): SkillLibrary {
   return new SkillLibrary(BUILTIN_SKILLS);
 }
