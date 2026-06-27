@@ -1,5 +1,5 @@
 /**
- * @office-agent/agent —— 意图 → 受约束 ChangeSet。
+ * @opal/agent —— 意图 → 受约束 ChangeSet。
  * Provider 无关的 ModelClient:Claude 原生 + OpenAI 兼容(DeepSeek/GLM/Kimi/豆包/MiniMax/Gemini/ChatGPT)。
  */
 export * from './model.js';

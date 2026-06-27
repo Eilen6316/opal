@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { AnchorId, ChangeSet, DocRev, HostId, LogicalAnchor } from '@office-agent/core';
+import type { AnchorId, ChangeSet, DocRev, HostId, LogicalAnchor } from '@opal/core';
 import { DrawioSurgicalWriteback } from './writeback.js';
 
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);

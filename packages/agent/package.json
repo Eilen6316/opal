@@ -1,5 +1,5 @@
 {
-  "name": "@office-agent/agent",
+  "name": "@opal/agent",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "test": "node --import tsx --test src/agent.test.ts"
   },
   "dependencies": {
-    "@office-agent/core": "0.0.1",
+    "@opal/core": "0.0.1",
     "@anthropic-ai/sdk": "latest",
     "openai": "latest"
   },

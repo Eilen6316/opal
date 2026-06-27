@@ -1,5 +1,5 @@
 {
-  "name": "@office-agent/core",
+  "name": "@opal/core",
   "version": "0.0.1",
   "private": true,
   "type": "module",

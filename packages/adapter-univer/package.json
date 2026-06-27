@@ -1,5 +1,5 @@
 {
-  "name": "@office-agent/adapter-univer",
+  "name": "@opal/adapter-univer",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,12 +10,12 @@
     "test": "node --import tsx --test src/xlsx-patch.test.ts src/agent-pipeline.test.ts"
   },
   "dependencies": {
-    "@office-agent/core": "0.0.1",
-    "@office-agent/writeback-surgical": "0.0.1",
+    "@opal/core": "0.0.1",
+    "@opal/writeback-surgical": "0.0.1",
     "fflate": "^0.8.2"
   },
   "devDependencies": {
-    "@office-agent/agent": "0.0.1",
+    "@opal/agent": "0.0.1",
     "tsx": "^4.19.0"
   }
 }

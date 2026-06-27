@@ -1,6 +1,6 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import type { DocRev } from '@office-agent/core';
+import type { DocRev } from '@opal/core';
 import { Agent, MockModelClient, createModelClient, PROVIDERS, type Provider } from './index.js';
 
 test('Agent: 意图 + Mock 模型 → 受约束 ChangeSet', async () => {

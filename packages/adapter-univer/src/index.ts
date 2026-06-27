@@ -7,7 +7,7 @@
  *  - changes():  Facade getRange().setValue/setFormula;Command/Mutation 系统给 undo/redo;
  *                Node 同构 headless 实例做 shadowApply(fork 快照→应用→算 before/after)。
  *  - overlay():  在 Univer canvas 之上挂自建绝对定位 SVG 覆盖层(圈选/红笔/diff 高亮)。
- *  - writebacks(): 交给 @office-agent/writeback-surgical(外科补丁)。
+ *  - writebacks(): 交给 @opal/writeback-surgical(外科补丁)。
  *
  * 详见 .work/abstraction-layer.md §5、§9(MVP 最小子集)。
  */
@@ -27,8 +27,8 @@ import type {
   ShadowDoc,
   Unsubscribe,
   WritebackBackend,
-} from '@office-agent/core';
-import { SurgicalOoxmlWriteback } from '@office-agent/writeback-surgical';
+} from '@opal/core';
+import { SurgicalOoxmlWriteback } from '@opal/writeback-surgical';
 import { buildXlsxCompiler } from './xlsx-patch.js';
 
 const TODO = (what: string): never => {

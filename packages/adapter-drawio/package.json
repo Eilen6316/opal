@@ -1,5 +1,5 @@
 {
-  "name": "@office-agent/adapter-drawio",
+  "name": "@opal/adapter-drawio",
   "version": "0.0.1",
   "private": true,
   "type": "module",
@@ -10,7 +10,7 @@
     "test": "node --import tsx --test src/mxgraph.test.ts src/writeback.test.ts"
   },
   "dependencies": {
-    "@office-agent/core": "0.0.1"
+    "@opal/core": "0.0.1"
   },
   "devDependencies": {
     "tsx": "^4.19.0"

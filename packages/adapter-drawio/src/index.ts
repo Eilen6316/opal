@@ -26,7 +26,7 @@ import type {
   ShadowDoc,
   Unsubscribe,
   WritebackBackend,
-} from '@office-agent/core';
+} from '@opal/core';
 import { DrawioSurgicalWriteback } from './writeback.js';
 
 const TODO = (what: string): never => {

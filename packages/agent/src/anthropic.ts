@@ -5,7 +5,7 @@
  * 中国线可换 baseURL/国产可合规模型。
  */
 import Anthropic from '@anthropic-ai/sdk';
-import type { ChangeSet } from '@office-agent/core';
+import type { ChangeSet } from '@opal/core';
 import {
   buildChangeSet,
   PROPOSE_DESCRIPTION,

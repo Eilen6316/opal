@@ -3,7 +3,7 @@
  * 模型只用 A1 引用 + setValue/setFormula 说话(Proposal),由 buildChangeSet 组装成正式 ChangeSet
  * (锚点表 + edits),绝不让模型直接产 OOXML。
  */
-import type { AnchorId, CellValue, ChangeSet, DocRev, Edit, EditOp, HostId, LogicalAnchor } from '@office-agent/core';
+import type { AnchorId, CellValue, ChangeSet, DocRev, Edit, EditOp, HostId, LogicalAnchor } from '@opal/core';
 
 /** 模型面向的轻量提案:A1 + op。 */
 export interface Proposal {

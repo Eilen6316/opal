@@ -19,7 +19,7 @@ import type {
   WritebackId,
   WritebackKind,
   WritebackResult,
-} from '@office-agent/core';
+} from '@opal/core';
 import { comparePartsIntegrity, repackOoxml, type OoxmlParts } from './ooxml.js';
 
 /** 把 ChangeSet 编译成"部件 → 新字节";由格式适配器提供。 */

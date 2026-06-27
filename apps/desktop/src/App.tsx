@@ -42,7 +42,7 @@ const RECENT = [
   { t: '标红异常值', time: '今天 09:14' },
 ];
 
-/** 8 家 BYOK 模型(与 @office-agent/agent 的 providers 对应)。 */
+/** 8 家 BYOK 模型(与 @opal/agent 的 providers 对应)。 */
 const MODEL_PROVIDERS = [
   { id: 'claude', label: 'Claude', model: 'claude-opus-4-8' },
   { id: 'openai', label: 'ChatGPT', model: 'gpt-5.5' },
@@ -105,7 +105,7 @@ export function App() {
       <header className="topbar">
         <div className="brand">
           <span className="mark"><IconGrid size={18} /></span>
-          Office Agent <span className="sub">workbench</span>
+          OPAL <span className="sub">safe-commit layer</span>
         </div>
         <div className="file">
           <span className="name">月度销售表.xlsx</span>
