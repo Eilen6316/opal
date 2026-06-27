@@ -2,14 +2,22 @@
 import { createContext, useContext } from 'react';
 import { DICT } from './i18n-dict.js';
 
-export type Lang = 'zh' | 'en' | 'ja' | 'fr' | 'ko';
+export type Lang =
+  | 'zh' | 'en' | 'fr' | 'de' | 'hi' | 'id' | 'it' | 'ja' | 'ko' | 'pt' | 'es419' | 'esES';
 
 export const LANGS: { id: Lang; label: string }[] = [
   { id: 'zh', label: '中文' },
-  { id: 'en', label: 'English' },
-  { id: 'ja', label: '日本語' },
-  { id: 'fr', label: 'Français' },
-  { id: 'ko', label: '한국어' },
+  { id: 'en', label: 'English (United States)' },
+  { id: 'fr', label: 'Français (France)' },
+  { id: 'de', label: 'Deutsch (Deutschland)' },
+  { id: 'hi', label: 'हिन्दी (भारत)' },
+  { id: 'id', label: 'Indonesia (Indonesia)' },
+  { id: 'it', label: 'Italiano (Italia)' },
+  { id: 'ja', label: '日本語 (日本)' },
+  { id: 'ko', label: '한국어 (대한민국)' },
+  { id: 'pt', label: 'Português (Brasil)' },
+  { id: 'es419', label: 'Español (Latinoamérica)' },
+  { id: 'esES', label: 'Español (España)' },
 ];
 
 export type T = (zh: string) => string;
