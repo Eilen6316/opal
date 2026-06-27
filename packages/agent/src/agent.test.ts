@@ -91,6 +91,34 @@ test('Agent + 约定 + 技能:都注入系统提示,不破坏产出', async () =
   assert.equal(cs.edits.length, 1);
 });
 
+test('Agent reask: 校验失败 → 同回合重试修正', async () => {
+  let n = 0;
+  const mock = new MockModelClient(() => {
+    n++;
+    return { plan: 'x', edits: n < 2 ? [] : [{ cell: 'A1', op: 'setValue', value: 1 }] };
+  });
+  const cs = await new Agent(mock, undefined, undefined, undefined, {
+    validator: (c) => ({ ok: c.edits.length > 0, errors: c.edits.length ? [] : ['edits 不能为空'] }),
+    maxRetries: 2,
+  }).propose({ hostId: 'h1', format: 'excel', intent: 'x', baseRev: 0 as DocRev, anchors: [], context: '' });
+  assert.equal(n, 2); // 第一次空→重试,第二次通过
+  assert.equal(cs.edits.length, 1);
+});
+
+test('Agent reask: 用尽重试返回最后一次(调用 1+maxRetries 次)', async () => {
+  let n = 0;
+  const mock = new MockModelClient(() => {
+    n++;
+    return { plan: 'x', edits: [] };
+  });
+  const cs = await new Agent(mock, undefined, undefined, undefined, {
+    validator: () => ({ ok: false, errors: ['always fail'] }),
+    maxRetries: 2,
+  }).propose({ hostId: 'h1', format: 'excel', intent: 'x', baseRev: 0 as DocRev, anchors: [], context: '' });
+  assert.equal(n, 3); // 1 + 2 retries
+  assert.equal(cs.edits.length, 0); // 返回最后一次(无效),交下游裁决
+});
+
 test('createModelClient 覆盖 8 家厂商(9 个 provider key)', () => {
   const providers: Provider[] = ['claude', 'openai', 'chatgpt', 'deepseek', 'glm', 'kimi', 'doubao', 'minimax', 'gemini'];
   for (const p of providers) {
