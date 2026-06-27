@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   IconGrid, IconSelect, IconArrow, IconStrike, IconPencil, IconHelp,
@@ -28,7 +28,7 @@ const DATA = [
 ];
 const AMOUNT = ['4560', '4472', '57000', '4480', '4784'];
 const MARGIN = ['41%', '37%', '41%', '28%', '37%'];
-const ANOMALY_ROW = 2;
+const ANOMALY_ROWIDX = 3; // 1500 那行(DATA[2])在网格里的 rowIdx(0=表头行)
 
 const EXAMPLES = [
   { Icon: IconFilter, t: '清洗这张表', d: '统一日期格式、修复被存成文本的数字、去空值' },
@@ -59,6 +59,8 @@ const lsSet = (k: string, v: string): void => {
   if (typeof localStorage !== 'undefined') localStorage.setItem(k, v);
 };
 
+interface Sel { ar: number; ac: number; br: number; bc: number }
+
 function Section({ label, children, defaultOpen = true }: { label: string; children: ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -79,6 +81,15 @@ export function App() {
   const [provider, setProvider] = useState(() => lsGet('oa.provider', 'claude'));
   const [model, setModel] = useState(() => lsGet('oa.model', 'claude-opus-4-8'));
   const [apiKey, setApiKey] = useState(() => lsGet('oa.apiKey', ''));
+  // 选区:锚点 (ar,ac) → 焦点 (br,bc);rowIdx 0=表头行,1..5=数据行;col 0..5=A..F
+  const [sel, setSel] = useState<Sel>({ ar: 1, ac: 2, br: 5, bc: 5 });
+  const dragRef = useRef(false);
+  // 双击进入单元格编辑;改动存 overrides(以 "ri,ci" 为键),覆盖原始显示值
+  const [overrides, setOverrides] = useState<Record<string, string>>({});
+  const [editing, setEditing] = useState<{ ri: number; ci: number } | null>(null);
+  const [editVal, setEditVal] = useState('');
+  const cellKey = (ri: number, ci: number): string => ri + ',' + ci;
+
   const curProvider = MODEL_PROVIDERS.find((p) => p.id === provider) ?? MODEL_PROVIDERS[0]!;
   const pickProvider = (id: string): void => {
     const p = MODEL_PROVIDERS.find((x) => x.id === id) ?? MODEL_PROVIDERS[0]!;
@@ -88,16 +99,96 @@ export function App() {
     lsSet('oa.model', p.model);
   };
 
-  const cellClass = (ri: number, ci: number): string => {
-    if (!sent) return ci >= 2 ? 'sel' : '';
-    if (ci === 4 || ci === 5) return 'add';
-    if (ci === 2 && ri === ANOMALY_ROW) return 'del';
-    return '';
-  };
-  const cellValue = (row: string[], ri: number, ci: number): string => {
+  // 拖选:松开鼠标即结束(全局监听,松手在表外也算)
+  useEffect(() => {
+    const up = (): void => {
+      dragRef.current = false;
+    };
+    window.addEventListener('mouseup', up);
+    return () => window.removeEventListener('mouseup', up);
+  }, []);
+
+  const r1 = Math.min(sel.ar, sel.br);
+  const r2 = Math.max(sel.ar, sel.br);
+  const c1 = Math.min(sel.ac, sel.bc);
+  const c2 = Math.max(sel.ac, sel.bc);
+  const inSel = (ri: number, ci: number): boolean => ri >= r1 && ri <= r2 && ci >= c1 && ci <= c2;
+  const a1 = (ri: number, ci: number): string => `${COLS[ci]}${ri + 1}`; // rowIdx 0 → 行 1
+  const rangeLabel = r1 === r2 && c1 === c2 ? a1(r1, c1) : `${a1(r1, c1)}:${a1(r2, c2)}`;
+  const selRows = r2 - r1 + 1;
+  const selCols = c2 - c1 + 1;
+
+  const gridValue = (ri: number, ci: number): string => {
+    const ov = overrides[cellKey(ri, ci)];
+    if (ov !== undefined) return ov;
+    if (ri === 0) return HEADERS[ci] ?? '';
+    const di = ri - 1;
+    const row = DATA[di] ?? [];
     if (ci <= 3) return row[ci] ?? '';
-    if (ci === 4) return sent ? (AMOUNT[ri] ?? '') : '';
-    return sent ? (MARGIN[ri] ?? '') : '';
+    if (ci === 4) return sent ? (AMOUNT[di] ?? '') : '';
+    return sent ? (MARGIN[di] ?? '') : '';
+  };
+  const cellClass = (ri: number, ci: number): string => {
+    const cls: string[] = [];
+    if (inSel(ri, ci)) cls.push('sel');
+    if (sent && ri >= 1) {
+      if (ci === 4 || ci === 5) cls.push('add');
+      else if (ci === 2 && ri === ANOMALY_ROWIDX) cls.push('del');
+    }
+    return cls.join(' ');
+  };
+
+  const onDown = (ri: number, ci: number): void => {
+    setSel({ ar: ri, ac: ci, br: ri, bc: ci });
+    dragRef.current = true;
+  };
+  const onEnter = (ri: number, ci: number): void => {
+    if (dragRef.current) setSel((s) => ({ ...s, br: ri, bc: ci }));
+  };
+  const selColumn = (ci: number): void => setSel({ ar: 0, ac: ci, br: 5, bc: ci });
+  const selRow = (ri: number): void => setSel({ ar: ri, ac: 0, br: ri, bc: 5 });
+
+  const beginEdit = (ri: number, ci: number): void => {
+    setEditing({ ri, ci });
+    setEditVal(gridValue(ri, ci));
+  };
+  const commitEdit = (): void => {
+    if (editing) setOverrides((o) => ({ ...o, [cellKey(editing.ri, editing.ci)]: editVal }));
+    setEditing(null);
+  };
+  const cellInner = (ri: number, ci: number): ReactNode =>
+    editing && editing.ri === ri && editing.ci === ci ? (
+      <input
+        className="celledit"
+        autoFocus
+        value={editVal}
+        onChange={(e) => setEditVal(e.target.value)}
+        onBlur={commitEdit}
+        onKeyDown={(e) => {
+          if (e.key === 'Enter') commitEdit();
+          else if (e.key === 'Escape') setEditing(null);
+        }}
+        onMouseDown={(e) => e.stopPropagation()}
+      />
+    ) : (
+      gridValue(ri, ci)
+    );
+
+  /** 发送时随消息一并交给 Agent 的选区上下文(= ProposeRequest.context)。 */
+  const selectionContext = (): string => {
+    const lines = [`选区 ${rangeLabel}`];
+    for (let r = r1; r <= r2; r++) {
+      const cells: string[] = [];
+      for (let c = c1; c <= c2; c++) cells.push(gridValue(r, c) || '(空)');
+      lines.push(cells.join('\t'));
+    }
+    return lines.join('\n');
+  };
+  const send = (): void => {
+    // 选区随消息一并发给 Agent。接真后端时:
+    // agent.propose({ format:'excel', intent, context: selectionContext(), baseRev, anchors, hostId })
+    void selectionContext();
+    setSent(true);
   };
 
   return (
@@ -134,23 +225,46 @@ export function App() {
             <table className="sheet">
               <thead>
                 <tr>
-                  <th className="colh" />
-                  {COLS.map((c) => <th key={c} className="colh">{c}</th>)}
+                  <th className="colh corner" />
+                  {COLS.map((c, ci) => (
+                    <th key={c} className="colh" onMouseDown={() => selColumn(ci)}>{c}</th>
+                  ))}
                 </tr>
               </thead>
               <tbody>
                 <tr>
-                  <td className="rowh">1</td>
-                  {HEADERS.map((h) => <td key={h} className="name">{h}</td>)}
+                  <td className="rowh" onMouseDown={() => selRow(0)}>1</td>
+                  {HEADERS.map((_, ci) => (
+                    <td
+                      key={ci}
+                      className={('name ' + cellClass(0, ci)).trim()}
+                      onMouseDown={() => onDown(0, ci)}
+                      onMouseEnter={() => onEnter(0, ci)}
+                      onDoubleClick={() => beginEdit(0, ci)}
+                    >
+                      {cellInner(0, ci)}
+                    </td>
+                  ))}
                 </tr>
-                {DATA.map((row, ri) => (
-                  <tr key={ri}>
-                    <td className="rowh">{ri + 2}</td>
-                    {COLS.map((_, ci) => (
-                      <td key={ci} className={cellClass(ri, ci)}>{cellValue(row, ri, ci)}</td>
-                    ))}
-                  </tr>
-                ))}
+                {DATA.map((_, di) => {
+                  const ri = di + 1;
+                  return (
+                    <tr key={di}>
+                      <td className="rowh" onMouseDown={() => selRow(ri)}>{ri + 1}</td>
+                      {COLS.map((_, ci) => (
+                        <td
+                          key={ci}
+                          className={cellClass(ri, ci)}
+                          onMouseDown={() => onDown(ri, ci)}
+                          onMouseEnter={() => onEnter(ri, ci)}
+                          onDoubleClick={() => beginEdit(ri, ci)}
+                        >
+                          {cellInner(ri, ci)}
+                        </td>
+                      ))}
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
@@ -159,9 +273,9 @@ export function App() {
         <aside className="rail">
           <div className="selbar">
             <span className="dot" />
-            选区 <span className="ref">C2:F6</span>
+            选区 <span className="ref">{rangeLabel}</span>
             <span className="grow" />
-            <span>销售数据 5 × 4</span>
+            <span>{selRows} × {selCols} 单元格</span>
           </div>
 
           <div className="rail-body">
@@ -265,6 +379,9 @@ export function App() {
               </div>
             )}
             <div className="box">
+              <div className="selchip">
+                <span className="dot" /> 已选 <b>{rangeLabel}</b> · {selRows}×{selCols},发送时随消息一并给 Agent
+              </div>
               <textarea
                 value={intent}
                 onChange={(e) => setIntent(e.target.value)}
@@ -279,7 +396,7 @@ export function App() {
                 <button className={'model' + (cfgOpen ? ' on' : '')} onClick={() => setCfgOpen((v) => !v)}>
                   {curProvider.label} <IconChevron size={13} />
                 </button>
-                <button className="send" title="发送" onClick={() => setSent(true)}><IconSend size={16} /></button>
+                <button className="send" title="发送" onClick={send}><IconSend size={16} /></button>
               </div>
             </div>
           </div>
