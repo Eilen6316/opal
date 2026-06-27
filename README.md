@@ -64,6 +64,8 @@ opal-run --format excel --intent "fill amount = qty × price" --in book.xlsx --o
 npm install
 npm run typecheck                  # tsc -b across packages/*
 npm run dev                        # cockpit UI → http://localhost:5173
+npm run app -w @opal/desktop       # build + launch the Electron desktop window
+npm run app:pack -w @opal/desktop  # package installers (electron-builder → release/)
 npm test -w @opal/core             # adapter registry
 npm test -w @opal/agent            # intent → ChangeSet (mock model + 8-provider factory)
 npm test -w @opal/adapter-univer   # intent → ChangeSet → surgical .xlsx write-back
@@ -80,7 +82,9 @@ npm test -w @opal/writeback-surgical
 - [x] Headless runtime: intent → ChangeSet → reviewable diff → surgical write-back, end-to-end (excel/drawio)
 - [x] MCP server + headless CLI with a JSON event stream (BYOK)
 - [x] Word redline write-back (w:ins/w:del) + PDF form-fill adapter — propose→commit for excel/word/pdf/drawio
-- [ ] Wire the cockpit UI to the runtime (and Electron packaging)
+- [x] Ribbon formatting applies to the live selection (bold/italic/colors/align/number-format)
+- [x] Electron desktop shell + electron-builder packaging config (12-language UI)
+- [ ] Wire the cockpit UI to the runtime via the Electron preload IPC bridge
 
 ## License
 
