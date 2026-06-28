@@ -353,7 +353,7 @@ const RECENT = [
 const MODEL_PROVIDERS = [
   { id: 'claude', label: 'Claude', model: 'claude-opus-4-8' },
   { id: 'openai', label: 'ChatGPT', model: 'gpt-5.5' },
-  { id: 'deepseek', label: 'DeepSeek', model: 'deepseek-chat' },
+  { id: 'deepseek', label: 'DeepSeek', model: 'deepseek-v4-flash' },
   { id: 'glm', label: '智谱 GLM', model: 'glm-4.6' },
   { id: 'kimi', label: 'Kimi', model: 'kimi-latest' },
   { id: 'doubao', label: '豆包', model: 'doubao-seed-1-6-251015' },
@@ -659,9 +659,20 @@ export function App() {
     { a1: 'E6', value: '=C6*D6', note: '按 销量×单价 补「金额」' },
     { a1: 'C4', bg: '#ffe3e3', color: '#d11', note: '标红异常值 1500(≈8× 均值)' },
   ];
-  /** 把 Agent 返回的 diff 转成可播放的网格操作(尽力而为)。 */
+  /** 把 Agent 返回的 diff 转成可播放的网格操作:写值 +(异常/标红类)自动套红。 */
   const diffToOps = (d: AgentDiff): GridOp[] =>
-    d.items.filter((it) => it.ref && it.after != null).map((it) => ({ a1: it.ref, value: it.after, note: it.label ?? it.badge }));
+    d.items
+      .filter((it) => it.ref)
+      .map((it) => {
+        const a1 = it.ref.replace(/^.*!/, ''); // 去掉 Sheet1! 前缀,落到当前表
+        const flag = /异常|标红|outlier|红|error|错误/i.test((it.label ?? '') + (it.badge ?? ''));
+        return {
+          a1,
+          ...(it.after != null ? { value: it.after } : {}),
+          ...(flag ? { bg: '#ffe3e3', color: '#d11' } : {}),
+          note: it.label ?? it.badge,
+        };
+      });
   /** 读入要写回的真实文件(.xlsx/.docx/.pdf/.drawio)为 base64。 */
   const onFile = (f: File | undefined): void => {
     if (!f) return;

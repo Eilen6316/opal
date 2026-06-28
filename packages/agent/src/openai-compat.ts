@@ -32,32 +32,46 @@ export class OpenAICompatModelClient implements ModelClient {
     this.forcedTool = opts.forcedTool ?? true;
   }
 
-  async proposeChangeSet(req: ProposeRequest, dialect: HostDialect): Promise<ChangeSet> {
+  private callModel(
+    req: ProposeRequest,
+    dialect: HostDialect,
+    forced: boolean,
+  ): Promise<OpenAI.Chat.Completions.ChatCompletion> {
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: 'system', content: dialect.systemPrompt + '\n\n选区上下文:\n' + req.context },
       { role: 'user', content: req.intent },
     ];
-    // 不支持强制工具的厂商:用提示消息把模型推向工具调用
-    if (!this.forcedTool) {
+    // 非强制工具时(含思考模型降级):用提示消息把模型推向工具调用
+    if (!forced) {
       messages.push({ role: 'user', content: `请只调用 ${dialect.toolName} 工具来完成上面的修改,不要用普通文字回答。` });
     }
-
-    const res = await this.client.chat.completions.create({
+    return this.client.chat.completions.create({
       model: this.model,
       max_tokens: this.maxTokens,
       messages,
       tools: [
         {
           type: 'function',
-          function: {
-            name: dialect.toolName,
-            description: dialect.toolDescription,
-            parameters: dialect.parameters,
-          },
+          function: { name: dialect.toolName, description: dialect.toolDescription, parameters: dialect.parameters },
         },
       ],
-      tool_choice: this.forcedTool ? { type: 'function', function: { name: dialect.toolName } } : 'auto',
+      tool_choice: forced ? { type: 'function', function: { name: dialect.toolName } } : 'auto',
     });
+  }
+
+  async proposeChangeSet(req: ProposeRequest, dialect: HostDialect): Promise<ChangeSet> {
+    let res: OpenAI.Chat.Completions.ChatCompletion;
+    try {
+      res = await this.callModel(req, dialect, this.forcedTool);
+    } catch (e) {
+      // 思考模型(如 deepseek-v4-flash / reasoner)不支持强制 tool_choice → 自动降级重试
+      const msg = e instanceof Error ? e.message : String(e);
+      if (this.forcedTool && /tool_choice|thinking/i.test(msg)) {
+        res = await this.callModel(req, dialect, false);
+      } else {
+        throw e;
+      }
+    }
 
     const call = res.choices[0]?.message?.tool_calls?.[0];
     if (!call || call.type !== 'function') {
