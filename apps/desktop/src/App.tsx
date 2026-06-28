@@ -1236,14 +1236,40 @@ interface XY { x: number; y: number }
 interface BNode { id: string; x: number; y: number; w: number; h: number; inner: string; label: string; kind?: string; rot?: number }
 type ArrowKind = 'classic' | 'open' | 'diamond' | 'circle' | 'none';
 type EdgeStyle = 'ortho' | 'straight';
-interface BEdge { id: string; from: string; to: string; arrow?: ArrowKind; style?: EdgeStyle }
+interface BEdge { id: string; from: string; to: string; arrow?: ArrowKind; style?: EdgeStyle; points?: XY[] }
 /** 两节点周界直连(直线线型)。 */
 function straightRoute(a: BNode, b: BNode): XY[] {
   const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
   const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
   return [perim(a, bc.x, bc.y), perim(b, ac.x, ac.y)];
 }
-function edgePts(a: BNode, b: BNode, style?: EdgeStyle): XY[] {
+/** 经过显式航点的正交折线:source周界 → 各航点 → target周界,相邻点间插直角拐点。 */
+function routeWaypoints(a: BNode, b: BNode, pts: XY[]): XY[] {
+  const first = pts[0]!;
+  const last = pts[pts.length - 1]!;
+  const all = [perim(a, first.x, first.y), ...pts, perim(b, last.x, last.y)];
+  const out: XY[] = [all[0]!];
+  for (let i = 1; i < all.length; i++) {
+    const c = out[out.length - 1]!;
+    const q = all[i]!;
+    if (Math.abs(c.x - q.x) > 0.5 && Math.abs(c.y - q.y) > 0.5) out.push({ x: q.x, y: c.y });
+    out.push(q);
+  }
+  return out;
+}
+/** 选中边时用于摆放航点/虚拟折点手柄的控制点序列:[源周界, ...航点, 目标周界]。 */
+function controlPoints(a: BNode, b: BNode, pts: XY[]): XY[] {
+  if (pts.length) {
+    const first = pts[0]!;
+    const last = pts[pts.length - 1]!;
+    return [perim(a, first.x, first.y), ...pts, perim(b, last.x, last.y)];
+  }
+  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+  const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  return [perim(a, bc.x, bc.y), perim(b, ac.x, ac.y)];
+}
+function edgePts(a: BNode, b: BNode, style?: EdgeStyle, points?: XY[]): XY[] {
+  if (points && points.length) return routeWaypoints(a, b, points);
   return style === 'straight' ? straightRoute(a, b) : ortho(a, b);
 }
 const ARROWS: ArrowKind[] = ['classic', 'open', 'diamond', 'circle', 'none'];
@@ -1379,6 +1405,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
   const [arrow, setArrow] = useState<{ from: string; dir: 'up' | 'right' | 'down' | 'left'; sx: number; sy: number } | null>(null);
   const [rotate, setRotate] = useState<{ id: string; cx: number; cy: number } | null>(null);
   const [panDrag, setPanDrag] = useState<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const [wpDrag, setWpDrag] = useState<{ edgeId: string; index: number } | null>(null);
   const [spaceDown, setSpaceDown] = useState(false);
   const spaceRef = useRef(false);
   const clipRef = useRef<BNode[]>([]);
@@ -1461,8 +1488,13 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
       setPan({ x: panDrag.ox + (e.clientX - panDrag.sx), y: panDrag.oy + (e.clientY - panDrag.sy) });
       return;
     }
-    if (!drag && !conn && !resize && !band && !arrow && !rotate) return;
+    if (!drag && !conn && !resize && !band && !arrow && !rotate && !wpDrag) return;
     const { x, y } = pt(e);
+    if (wpDrag) {
+      movedRef.current = true;
+      setEdges((es) => es.map((ed) => (ed.id === wpDrag.edgeId && ed.points ? { ...ed, points: ed.points.map((p, i) => (i === wpDrag.index ? { x: snap(x), y: snap(y) } : p)) } : ed)));
+      return;
+    }
     if (rotate) {
       movedRef.current = true;
       let deg = (Math.atan2(y - rotate.cy, x - rotate.cx) * 180) / Math.PI + 90;
@@ -1559,6 +1591,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
     setResize(null);
     setGuides(null);
     setRotate(null);
+    setWpDrag(null);
   };
   const capture = (e: { pointerId: number }): void => {
     try {
@@ -1752,8 +1785,8 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
           const a = nodes.find((n) => n.id === ed.from);
           const b = nodes.find((n) => n.id === ed.to);
           if (!a || !b) return null;
-          const pts = edgePts(a, b, ed.style);
-          const d = ed.style === 'straight' ? `M ${pts[0]!.x} ${pts[0]!.y} L ${pts[1]!.x} ${pts[1]!.y}` : roundedPath(pts);
+          const pts = edgePts(a, b, ed.style, ed.points);
+          const d = ed.style === 'straight' && !ed.points?.length ? `M ${pts[0]!.x} ${pts[0]!.y} L ${pts[1]!.x} ${pts[1]!.y}` : roundedPath(pts);
           const on = selEdge === ed.id;
           const arrow = ed.arrow ?? 'classic';
           return (
@@ -1769,17 +1802,59 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
               const a = ed && nodes.find((n) => n.id === ed.from);
               const b = ed && nodes.find((n) => n.id === ed.to);
               if (!ed || !a || !b) return null;
-              const pts = edgePts(a, b, ed.style);
+              const pts = edgePts(a, b, ed.style, ed.points);
               const s = pts[0]!;
               const e2 = pts[pts.length - 1]!;
+              const wps = ed.points ?? [];
+              const ctrl = controlPoints(a, b, wps);
+              const removeWp = (i: number): void => {
+                commit();
+                setEdges((es) => es.map((x) => (x.id === ed.id ? { ...x, points: wps.length > 1 ? wps.filter((_, k) => k !== i) : undefined } : x)));
+              };
+              const addWpAt = (segIdx: number, p: XY, e: { stopPropagation: () => void; pointerId: number }): void => {
+                e.stopPropagation();
+                capture(e);
+                beginGesture();
+                movedRef.current = true;
+                const np = [...wps];
+                np.splice(segIdx, 0, { x: snap(p.x), y: snap(p.y) });
+                setEdges((es) => es.map((x) => (x.id === ed.id ? { ...x, points: np } : x)));
+                setWpDrag({ edgeId: ed.id, index: segIdx });
+              };
               return (
-                <g style={{ pointerEvents: 'none' }}>
-                  <circle cx={s.x} cy={s.y} r={5} fill="#fff" stroke="var(--accent)" strokeWidth={2} />
-                  <g transform={`translate(${e2.x},${e2.y})`}>
-                    <circle r={6} fill="#fff" stroke="#00c853" strokeWidth={1.5} />
-                    <line x1={-3.4} y1={-3.4} x2={3.4} y2={3.4} stroke="#00c853" strokeWidth={2.2} strokeLinecap="round" />
-                    <line x1={3.4} y1={-3.4} x2={-3.4} y2={3.4} stroke="#00c853" strokeWidth={2.2} strokeLinecap="round" />
+                <g>
+                  <g style={{ pointerEvents: 'none' }}>
+                    <circle cx={s.x} cy={s.y} r={5} fill="#fff" stroke="var(--accent)" strokeWidth={2} />
+                    <g transform={`translate(${e2.x},${e2.y})`}>
+                      <circle r={6} fill="#fff" stroke="#00c853" strokeWidth={1.5} />
+                      <line x1={-3.4} y1={-3.4} x2={3.4} y2={3.4} stroke="#00c853" strokeWidth={2.2} strokeLinecap="round" />
+                      <line x1={3.4} y1={-3.4} x2={-3.4} y2={3.4} stroke="#00c853" strokeWidth={2.2} strokeLinecap="round" />
+                    </g>
                   </g>
+                  {ctrl.slice(0, -1).map((c, i) => {
+                    const q = ctrl[i + 1]!;
+                    const mid = { x: (c.x + q.x) / 2, y: (c.y + q.y) / 2 };
+                    return (
+                      <g key={'vb' + i} style={{ cursor: 'crosshair', pointerEvents: 'all' }} onPointerDown={(e) => addWpAt(i, mid, e)}>
+                        <circle cx={mid.x} cy={mid.y} r={10} fill="transparent" />
+                        <circle cx={mid.x} cy={mid.y} r={4.5} fill="var(--accent)" fillOpacity={0.18} stroke="var(--accent)" strokeOpacity={0.65} strokeWidth={1.2} />
+                      </g>
+                    );
+                  })}
+                  {wps.map((p, i) => (
+                    <circle
+                      key={'wp' + i}
+                      cx={p.x}
+                      cy={p.y}
+                      r={5}
+                      fill="var(--accent)"
+                      stroke="#fff"
+                      strokeWidth={1.6}
+                      style={{ cursor: 'move', pointerEvents: 'all' }}
+                      onPointerDown={(e) => { e.stopPropagation(); capture(e); beginGesture(); setWpDrag({ edgeId: ed.id, index: i }); }}
+                      onDoubleClick={(e) => { e.stopPropagation(); removeWp(i); }}
+                    />
+                  ))}
                 </g>
               );
             })()
@@ -1928,7 +2003,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
             const a = ed && nodes.find((n) => n.id === ed.from);
             const b = ed && nodes.find((n) => n.id === ed.to);
             if (!ed || !a || !b) return null;
-            const pts = edgePts(a, b, ed.style);
+            const pts = edgePts(a, b, ed.style, ed.points);
             const mid = pts[Math.floor(pts.length / 2)] ?? pts[0]!;
             const setEdge = (patch: Partial<BEdge>): void => {
               commit();
