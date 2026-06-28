@@ -320,10 +320,67 @@ export const pdfDialect: HostDialect = {
   buildChangeSet: (req, proposal) => buildPdfChangeSet(req, proposal as PdfProposal),
 };
 
+// ───────────────────────── PPT ─────────────────────────
+
+export interface PptProposal {
+  plan: string;
+  edits: Array<{ slide: number; find: string; replace: string }>;
+}
+
+function buildPptChangeSet(req: ProposeRequest, p: PptProposal): ChangeSet {
+  const anchors: Record<AnchorId, LogicalAnchor> = {};
+  const edits: Edit[] = [];
+  p.edits.forEach((e, i) => {
+    const aid = ('a' + i) as AnchorId;
+    anchors[aid] = {
+      id: aid,
+      hostId: req.hostId as HostId,
+      kind: 'flow',
+      ref: null,
+      baseRev: req.baseRev,
+      portable: { kind: 'flow', path: [e.slide], quote: { prefix: '', text: e.find, suffix: '' }, bias: 'left' },
+    };
+    edits.push({ id: 'e' + i, target: aid, op: { family: 'text', kind: 'replaceText', text: e.replace } });
+  });
+  return newChangeSet(req, p.plan, anchors, edits);
+}
+
+export const pptDialect: HostDialect = {
+  format: 'ppt',
+  systemPrompt:
+    '你是一个 PowerPoint 正文编辑 Agent。用户要改某页幻灯片上的文字,把意图转成一组"幻灯片序号 + 原文 → 改后"的替换建议,' +
+    '只能通过 propose_changeset 工具提交。规则:① slide 是从 0 开始的幻灯片序号;② find 是该页真实存在的文字片段;' +
+    '③ replace 是改后的文字;④ 改动交用户逐条审阅后才落盘,只改命中文本、其余字节不变。先给一句话 plan,再给 edits。',
+  toolName: 'propose_changeset',
+  toolDescription: '提出对 PPT 幻灯片文字的替换建议(交用户审阅)。给 slide(序号,从0起)、find(原文)、replace(改后)。',
+  parameters: {
+    type: 'object',
+    properties: {
+      plan: { type: 'string', description: '一句话说明你打算做什么' },
+      edits: {
+        type: 'array',
+        items: {
+          type: 'object',
+          properties: {
+            slide: { type: 'number', description: '幻灯片序号,从 0 开始' },
+            find: { type: 'string', description: '该页真实存在的原文片段' },
+            replace: { type: 'string', description: '改后的文字' },
+          },
+          required: ['slide', 'find', 'replace'],
+        },
+      },
+    },
+    required: ['plan', 'edits'],
+  },
+  buildChangeSet: (req, proposal) => buildPptChangeSet(req, proposal as PptProposal),
+};
+
 export const DIALECTS: Record<string, HostDialect> = {
   excel: excelDialect,
   drawio: drawioDialect,
   word: wordDialect,
   docx: wordDialect,
   pdf: pdfDialect,
+  ppt: pptDialect,
+  pptx: pptDialect,
 };

@@ -23,7 +23,8 @@
     "@opal/adapter-univer": "0.0.1",
     "@opal/adapter-drawio": "0.0.1",
     "@opal/adapter-word": "0.0.1",
-    "@opal/adapter-pdf": "0.0.1"
+    "@opal/adapter-pdf": "0.0.1",
+    "@opal/adapter-pptx": "0.0.1"
   },
   "devDependencies": {
     "fflate": "^0.8.2",

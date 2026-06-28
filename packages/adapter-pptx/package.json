@@ -1,0 +1,20 @@
+{
+  "name": "@opal/adapter-pptx",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "scripts": {
+    "build": "tsc -b",
+    "test": "node --import tsx --test src/pptx-patch.test.ts"
+  },
+  "dependencies": {
+    "@opal/core": "0.0.1",
+    "@opal/writeback-surgical": "0.0.1"
+  },
+  "devDependencies": {
+    "fflate": "^0.8.2",
+    "tsx": "^4.19.0"
+  }
+}

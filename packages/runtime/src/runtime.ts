@@ -13,6 +13,7 @@ import { buildXlsxCompiler } from '@opal/adapter-univer';
 import { DrawioSurgicalWriteback } from '@opal/adapter-drawio';
 import { WordRedlineWriteback } from '@opal/adapter-word';
 import { PdfFormWriteback } from '@opal/adapter-pdf';
+import { buildPptxCompiler } from '@opal/adapter-pptx';
 import { defaultLibrary } from '@opal/skills';
 import type { SkillLibrary } from '@opal/skills';
 import { buildDiff, type OpalDiff } from './diff.js';
@@ -44,6 +45,8 @@ export class OpalRuntime {
       word: () => new WordRedlineWriteback(),
       docx: () => new WordRedlineWriteback(),
       pdf: () => new PdfFormWriteback(),
+      ppt: () => new SurgicalOoxmlWriteback(buildPptxCompiler()),
+      pptx: () => new SurgicalOoxmlWriteback(buildPptxCompiler()),
     };
   }
 

@@ -29,6 +29,7 @@ packages/adapter-univer/      Excel adapter (Univer) — ChangeSet → sheet XML
 packages/adapter-drawio/      drawio adapter — mxCell op engine + diagram-level surgical write-back
 packages/adapter-word/        Word adapter — word-level redline (w:ins/w:del) surgical write-back
 packages/adapter-pdf/         PDF adapter — AcroForm form-fill write-back (pdf-lib)
+packages/adapter-pptx/        PowerPoint adapter — slide-text surgical write-back (<a:t>)
 packages/writeback-surgical/  surgical OOXML write-back — validated + tested
 packages/runtime/             headless orchestrator: propose → diff → commit + JSON event stream
 apps/desktop/                 progressive-disclosure cockpit UI + BYOK model config (Vite + React; Electron later)
@@ -87,7 +88,7 @@ npm test -w @opal/writeback-surgical
 - [x] drawio adapter: mxCell add/delete/setProps/move + diagram-level surgical write-back
 - [x] Headless runtime: intent → ChangeSet → reviewable diff → surgical write-back, end-to-end (excel/drawio)
 - [x] MCP server + headless CLI with a JSON event stream (BYOK)
-- [x] Word redline write-back (w:ins/w:del) + PDF form-fill adapter — propose→commit for excel/word/pdf/drawio
+- [x] Word redline + PDF form-fill + PowerPoint slide-text adapters — propose→commit for excel/word/pdf/ppt/drawio
 - [x] Ribbon formatting applies to the live selection (bold/italic/colors/align/number-format)
 - [x] Electron desktop shell + electron-builder packaging config (12-language UI)
 - [x] Closed write-back loop in the cockpit (opal-serve): load a file → propose → review diff (per-item accept/reject) → accept subset → surgical write-back → download the edited file
