@@ -1378,6 +1378,12 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
   const [guides, setGuides] = useState<{ v: number[]; h: number[] } | null>(null);
   const [arrow, setArrow] = useState<{ from: string; dir: 'up' | 'right' | 'down' | 'left'; sx: number; sy: number } | null>(null);
   const [rotate, setRotate] = useState<{ id: string; cx: number; cy: number } | null>(null);
+  const [panDrag, setPanDrag] = useState<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const [spaceDown, setSpaceDown] = useState(false);
+  const spaceRef = useRef(false);
+  const clipRef = useRef<BNode[]>([]);
+  const past = useRef<{ nodes: BNode[]; edges: BEdge[] }[]>([]);
+  const future = useRef<{ nodes: BNode[]; edges: BEdge[] }[]>([]);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<XY>({ x: 0, y: 0 });
   const ref = useRef<HTMLDivElement | null>(null);
@@ -1423,6 +1429,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
   const nodeAt = (x: number, y: number, not?: string): BNode | undefined =>
     [...nodes].reverse().find((n) => n.id !== not && x >= n.x && x <= n.x + n.w && y >= n.y && y <= n.y + n.h);
   const addNode = (x: number, y: number, inner: string, label: string, kind?: string): void => {
+    commit();
     const id = 'n' + ++idRef.current;
     setNodes((ns) => [...ns, { id, x: snap(x - 45), y: snap(y - 27), w: 90, h: 54, inner, label, ...(kind ? { kind } : {}) }]);
     setSelIds(new Set([id]));
@@ -1432,6 +1439,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
   const cloneConnect = (fromId: string, dir: 'up' | 'right' | 'down' | 'left'): void => {
     const src = nodes.find((n) => n.id === fromId);
     if (!src) return;
+    commit();
     const gap = 60;
     const off = dir === 'up' ? { dx: 0, dy: -(src.h + gap) } : dir === 'down' ? { dx: 0, dy: src.h + gap } : dir === 'left' ? { dx: -(src.w + gap), dy: 0 } : { dx: src.w + gap, dy: 0 };
     const id = 'n' + ++idRef.current;
@@ -1449,9 +1457,14 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
   };
 
   const onMove = (e: { clientX: number; clientY: number; shiftKey?: boolean }): void => {
+    if (panDrag) {
+      setPan({ x: panDrag.ox + (e.clientX - panDrag.sx), y: panDrag.oy + (e.clientY - panDrag.sy) });
+      return;
+    }
     if (!drag && !conn && !resize && !band && !arrow && !rotate) return;
     const { x, y } = pt(e);
     if (rotate) {
+      movedRef.current = true;
       let deg = (Math.atan2(y - rotate.cy, x - rotate.cx) * 180) / Math.PI + 90;
       if (e.shiftKey) deg = Math.round(deg / 15) * 15;
       deg = Math.round(((deg % 360) + 360) % 360);
@@ -1466,6 +1479,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
       return;
     }
     if (drag) {
+      movedRef.current = true;
       let dx = x - drag.sx;
       let dy = y - drag.sy;
       // 对齐参考线:把拖动选区的 左/中/右、上/中/下 吸附到其它节点的同类线
@@ -1501,19 +1515,28 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
       }
       setNodes((ns) => ns.map((n) => (drag.origins[n.id] ? { ...n, x: snap(drag.origins[n.id]!.x + dx), y: snap(drag.origins[n.id]!.y + dy) } : n)));
     }
-    if (resize) setNodes((ns) => ns.map((n) => (n.id === resize.id ? resizeNode(resize, x, y, e.shiftKey === true) : n)));
+    if (resize) {
+      movedRef.current = true;
+      setNodes((ns) => ns.map((n) => (n.id === resize.id ? resizeNode(resize, x, y, e.shiftKey === true) : n)));
+    }
     if (conn) {
+      movedRef.current = true;
       const tg = nodeAt(x, y, conn.from);
       setConn((c) => (c ? { ...c, x, y, tgt: tg?.id ?? null } : c));
     }
     if (band) setBand((b) => (b ? { ...b, x1: x, y1: y } : b));
   };
   const onUp = (): void => {
+    if (panDrag) {
+      setPanDrag(null);
+      return;
+    }
     if (arrow) {
       cloneConnect(arrow.from, arrow.dir);
       setArrow(null);
       return;
     }
+    const madeEdge = !!(conn && conn.tgt);
     if (conn && conn.tgt) {
       const to = conn.tgt;
       setEdges((es) => (es.some((d) => d.from === conn.from && d.to === to) ? es : [...es, { id: 'e' + ++idRef.current, from: conn.from, to }]));
@@ -1523,6 +1546,14 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
       if (r.w > 3 || r.h > 3) setSelIds(new Set(nodes.filter((n) => intersects(r, n)).map((n) => n.id)));
       setBand(null);
     }
+    // 手势若真的改动了内容,把开始前的快照压入撤销栈
+    if ((movedRef.current || madeEdge) && preGesture.current) {
+      past.current.push(preGesture.current);
+      if (past.current.length > 80) past.current.shift();
+      future.current = [];
+    }
+    preGesture.current = null;
+    movedRef.current = false;
     setDrag(null);
     setConn(null);
     setResize(null);
@@ -1537,22 +1568,124 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
     }
   };
 
+  // ── 撤销/重做 + 手势历史 ──
+  const preGesture = useRef<{ nodes: BNode[]; edges: BEdge[] } | null>(null);
+  const movedRef = useRef(false);
+  const arrowNudging = useRef(false);
+  const snapshot = (): { nodes: BNode[]; edges: BEdge[] } => ({ nodes: nodes.map((n) => ({ ...n })), edges: edges.map((e) => ({ ...e })) });
+  const commit = (): void => {
+    past.current.push(snapshot());
+    if (past.current.length > 80) past.current.shift();
+    future.current = [];
+  };
+  const beginGesture = (): void => {
+    preGesture.current = snapshot();
+    movedRef.current = false;
+  };
+  const undo = (): void => {
+    const prev = past.current.pop();
+    if (!prev) return;
+    future.current.push(snapshot());
+    setNodes(prev.nodes);
+    setEdges(prev.edges);
+    setSelIds(new Set());
+    setSelEdge(null);
+  };
+  const redo = (): void => {
+    const next = future.current.pop();
+    if (!next) return;
+    past.current.push(snapshot());
+    setNodes(next.nodes);
+    setEdges(next.edges);
+    setSelIds(new Set());
+    setSelEdge(null);
+  };
+  const duplicate = (offset: number): void => {
+    const sel = nodes.filter((n) => selIds.has(n.id));
+    if (!sel.length) return;
+    commit();
+    const idMap = new Map<string, string>();
+    const clones = sel.map((n) => {
+      const id = 'n' + ++idRef.current;
+      idMap.set(n.id, id);
+      return { ...n, id, x: snap(n.x + offset), y: snap(n.y + offset) };
+    });
+    const newEdges = edges
+      .filter((ed) => idMap.has(ed.from) && idMap.has(ed.to))
+      .map((ed) => ({ ...ed, id: 'e' + ++idRef.current, from: idMap.get(ed.from)!, to: idMap.get(ed.to)! }));
+    setNodes((ns) => [...ns, ...clones]);
+    if (newEdges.length) setEdges((es) => [...es, ...newEdges]);
+    setSelIds(new Set(clones.map((c) => c.id)));
+    setSelEdge(null);
+  };
+
   useEffect(() => {
     const k = (e: KeyboardEvent): void => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && !editing) {
+      if (editing) return;
+      const meta = e.ctrlKey || e.metaKey;
+      if (e.code === 'Space' && !meta) {
+        if (!spaceRef.current) {
+          spaceRef.current = true;
+          setSpaceDown(true);
+        }
+        e.preventDefault();
+        return;
+      }
+      if (meta && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+      if (meta && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); return; }
+      if (meta && (e.key === 'a' || e.key === 'A')) { e.preventDefault(); setSelIds(new Set(nodes.map((n) => n.id))); setSelEdge(null); return; }
+      if (meta && (e.key === 'd' || e.key === 'D')) { e.preventDefault(); duplicate(20); return; }
+      if (meta && (e.key === 'c' || e.key === 'C')) { clipRef.current = nodes.filter((n) => selIds.has(n.id)).map((n) => ({ ...n })); return; }
+      if (meta && (e.key === 'v' || e.key === 'V')) {
+        if (!clipRef.current.length) return;
+        e.preventDefault();
+        commit();
+        const clones = clipRef.current.map((n) => ({ ...n, id: 'n' + ++idRef.current, x: snap(n.x + 24), y: snap(n.y + 24) }));
+        setNodes((ns) => [...ns, ...clones]);
+        setSelIds(new Set(clones.map((c) => c.id)));
+        setSelEdge(null);
+        return;
+      }
+      if (e.key === 'Escape') { setSelIds(new Set()); setSelEdge(null); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
         if (selIds.size) {
+          commit();
           setNodes((ns) => ns.filter((n) => !selIds.has(n.id)));
           setEdges((es) => es.filter((ed) => !selIds.has(ed.from) && !selIds.has(ed.to)));
           setSelIds(new Set());
         } else if (selEdge) {
+          commit();
           setEdges((es) => es.filter((ed) => ed.id !== selEdge));
           setSelEdge(null);
         }
+        return;
+      }
+      if (e.key.startsWith('Arrow') && selIds.size) {
+        e.preventDefault();
+        const step = e.shiftKey ? GRID : 1;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        if (!arrowNudging.current) {
+          commit();
+          arrowNudging.current = true;
+        }
+        setNodes((ns) => ns.map((n) => (selIds.has(n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n)));
       }
     };
+    const up = (e: KeyboardEvent): void => {
+      if (e.code === 'Space') {
+        spaceRef.current = false;
+        setSpaceDown(false);
+      }
+      if (e.key.startsWith('Arrow')) arrowNudging.current = false;
+    };
     window.addEventListener('keydown', k);
-    return () => window.removeEventListener('keydown', k);
-  }, [selIds, selEdge, editing]);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', k);
+      window.removeEventListener('keyup', up);
+    };
+  }, [selIds, selEdge, editing, nodes, edges]);
 
   // Ctrl + 滚轮:朝光标位置缩放画布(光标下的点保持不动)
   useEffect(() => {
@@ -1576,13 +1709,18 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
 
   return (
     <div
-      className="drawio-board"
+      className={'drawio-board' + (panDrag ? ' grabbing' : spaceDown ? ' grab' : '')}
       ref={ref}
       onDragOver={(e) => e.preventDefault()}
       onDrop={onDrop}
       onPointerMove={onMove}
       onPointerUp={onUp}
       onPointerDown={(e) => {
+        if (spaceRef.current || e.button === 1) {
+          capture(e);
+          setPanDrag({ sx: e.clientX, sy: e.clientY, ox: pan.x, oy: pan.y });
+          return;
+        }
         const cl = (e.target as HTMLElement).classList;
         if (e.target === ref.current || cl.contains('board-svg') || cl.contains('board-canvas')) {
           setSelIds(new Set());
@@ -1682,6 +1820,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
             onPointerDown={(e) => {
               e.stopPropagation();
               capture(e);
+              beginGesture();
               const ids = e.shiftKey ? new Set(selIds).add(n.id) : selIds.has(n.id) ? selIds : new Set([n.id]);
               setSelIds(ids);
               setSelEdge(null);
@@ -1725,6 +1864,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
                     onPointerDown={(e) => {
                       e.stopPropagation();
                       capture(e);
+                      beginGesture();
                       const { x, y } = pt(e);
                       setConn({ from: n.id, x, y, tgt: null });
                     }}
@@ -1740,6 +1880,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
                     onPointerDown={(e) => {
                       e.stopPropagation();
                       capture(e);
+                      beginGesture();
                       const { x, y } = pt(e);
                       setResize({ id: n.id, k: h.k, box: n, sx: x, sy: y });
                     }}
@@ -1753,6 +1894,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
                 onPointerDown={(e) => {
                   e.stopPropagation();
                   capture(e);
+                  beginGesture();
                   setRotate({ id: n.id, cx: n.x + n.w / 2, cy: n.y + n.h / 2 });
                 }}
               >
@@ -1768,6 +1910,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
                     onPointerDown={(e) => {
                       e.stopPropagation();
                       capture(e);
+                      beginGesture();
                       const { x, y } = pt(e);
                       setArrow({ from: n.id, dir, sx: x, sy: y });
                     }}
@@ -1787,7 +1930,10 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
             if (!ed || !a || !b) return null;
             const pts = edgePts(a, b, ed.style);
             const mid = pts[Math.floor(pts.length / 2)] ?? pts[0]!;
-            const setEdge = (patch: Partial<BEdge>): void => setEdges((es) => es.map((x) => (x.id === ed.id ? { ...x, ...patch } : x)));
+            const setEdge = (patch: Partial<BEdge>): void => {
+              commit();
+              setEdges((es) => es.map((x) => (x.id === ed.id ? { ...x, ...patch } : x)));
+            };
             return (
               <div className="etoolbar" style={{ left: mid.x * zoom + pan.x, top: mid.y * zoom + pan.y - 44 }} onPointerDown={(e) => e.stopPropagation()}>
                 <button className={'etb' + (ed.style !== 'straight' ? ' on' : '')} title={t('正交')} onClick={() => setEdge({ style: 'ortho' })}>⌐</button>
