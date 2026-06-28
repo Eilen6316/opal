@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from 'react';
+import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent, ReactNode } from 'react';
 import {
   IconGrid, IconSelect, IconArrow, IconStrike, IconPencil, IconHelp,
@@ -9,6 +9,9 @@ import {
 } from './icons.js';
 import { LANGS, makeT, TContext, useT, type Lang } from './i18n.js';
 import { DRAWIO_SHAPES } from './drawio-shapes.js';
+
+/** 真 Univer 表格(体积大 → 懒加载,仅 Excel 用)。 */
+const UniverSheet = lazy(() => import('./UniverSheet.js'));
 
 /** 渐进披露驾驶舱。风格参照 Next AI Drawio:纯白、分区块、线性图标、无 emoji。五语 i18n(t 包裹显示文案)。 */
 
@@ -740,7 +743,7 @@ export function App() {
           <section className="editor">
             {fmt === 'drawio' ? (
               <DrawioToolbar onAct={act} />
-            ) : (
+            ) : fmt === 'excel' ? null : (
             <div className="ribbon">
               <div className="ribbon-tabs">
                 {RIBBONS[fmt].map((rt, i) => (
@@ -793,35 +796,9 @@ export function App() {
             )}
             <div className={'canvas' + (isExcel ? ' excel' : fmt === 'drawio' ? ' board' : ' doc')}>
               {isExcel ? (
-                <table className="sheet full">
-                  <thead>
-                    <tr>
-                      <th className="colh corner" />
-                      {COLS.map((c, ci) => (
-                        <th key={c} className="colh" onMouseDown={() => selColumn(ci)}>{c}</th>
-                      ))}
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {ROWS.map((ri) => (
-                      <tr key={ri}>
-                        <td className="rowh" onMouseDown={() => selRow(ri)}>{ri + 1}</td>
-                        {COLS.map((_, ci) => (
-                          <td
-                            key={ci}
-                            className={((ri === 0 ? 'name ' : '') + cellClass(ri, ci)).trim()}
-                            style={cellFmtStyle(ri, ci)}
-                            onMouseDown={() => onDown(ri, ci)}
-                            onMouseEnter={() => onEnter(ri, ci)}
-                            onDoubleClick={() => beginEdit(ri, ci)}
-                          >
-                            {cellInner(ri, ci)}
-                          </td>
-                        ))}
-                      </tr>
-                    ))}
-                  </tbody>
-                </table>
+                <Suspense fallback={<div className="univer-loading">{t('加载表格引擎…')}</div>}>
+                  <UniverSheet />
+                </Suspense>
               ) : fmt === 'drawio' ? (
                 <DrawioBoard />
               ) : (
