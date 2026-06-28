@@ -92,7 +92,6 @@ interface FRangeLike {
 }
 interface FWorkbookLike {
   getActiveRange(): FRangeLike | null;
-  getActiveSheet?(): { getRange(a1: string): { getValues(): unknown[][] } } | null;
   onSelectionChange(cb: (s: unknown) => void): { dispose?: () => void };
 }
 
@@ -111,7 +110,8 @@ function snap(wb: FWorkbookLike | null | undefined): UniSel | null {
     // 读第 1 行作为列名(即使选区不含表头),让 Agent 知道每列含义,避免数错列
     let header: string[] = [];
     try {
-      const hv = wb?.getActiveSheet?.()?.getRange(`${colLetters[0]}1:${colLetters[cols - 1]}1`)?.getValues?.();
+      const ws = (wb as unknown as { getActiveSheet?: () => { getRange?: (a1: string) => { getValues?: () => unknown[][] } } | null } | null)?.getActiveSheet?.();
+      const hv = ws?.getRange?.(`${colLetters[0]}1:${colLetters[cols - 1]}1`)?.getValues?.();
       header = (hv?.[0] ?? []).map((v) => (v == null ? '' : String(v)));
     } catch {
       /* 表头可选 */
