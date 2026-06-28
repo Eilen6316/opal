@@ -5,12 +5,14 @@
   "type": "module",
   "bin": {
     "opal-mcp": "./dist/mcp.js",
-    "opal-run": "./dist/cli.js"
+    "opal-run": "./dist/cli.js",
+    "opal-serve": "./dist/serve.js"
   },
   "scripts": {
     "build": "tsc -b",
     "mcp": "node --import tsx src/mcp.ts",
-    "run": "node --import tsx src/cli.ts"
+    "run": "node --import tsx src/cli.ts",
+    "serve": "node --import tsx src/serve.ts"
   },
   "dependencies": {
     "@opal/core": "0.0.1",

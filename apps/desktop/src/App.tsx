@@ -372,6 +372,10 @@ interface CellFmt {
 const FMT_BIU: Record<string, 'bold' | 'italic' | 'underline'> = { B: 'bold', I: 'italic', U: 'underline' };
 const FMT_ALIGN: Record<string, 'left' | 'center' | 'right'> = { 左对齐: 'left', 居中: 'center', 右对齐: 'right' };
 
+/** opal-serve 的 /propose 返回的可审阅 diff(结构对齐 @opal/runtime 的 OpalDiff;此处只取 JSON 形状,不引 Node 包)。 */
+interface AgentDiffItem { editId: string; ref: string; badge: string; label: string; after?: string }
+interface AgentDiff { changeSetId: string; hostId: string; intent: string; items: AgentDiffItem[] }
+
 function Section({ label, children, defaultOpen = true }: { label: string; children: ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
   return (
@@ -399,6 +403,9 @@ export function App() {
   const [provider, setProvider] = useState(() => lsGet('oa.provider', 'claude'));
   const [model, setModel] = useState(() => lsGet('oa.model', 'claude-opus-4-8'));
   const [apiKey, setApiKey] = useState(() => lsGet('oa.apiKey', ''));
+  const [server, setServer] = useState(() => lsGet('oa.server', ''));
+  const [realDiff, setRealDiff] = useState<AgentDiff | null>(null);
+  const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<Sel>({ ar: 1, ac: 2, br: 5, bc: 5 });
   const dragRef = useRef(false);
   const [overrides, setOverrides] = useState<Record<string, string>>({});
@@ -552,8 +559,29 @@ export function App() {
     }
     return lines.join('\n');
   };
-  const send = (): void => {
-    void selectionContext();
+  /** 配了 opal-serve 端点 + API Key → 走真实 runtime(propose→diff);否则用内置演示。 */
+  const send = async (): Promise<void> => {
+    const ctx = selectionContext();
+    const ep = server.trim().replace(/\/$/, '');
+    if (ep && apiKey) {
+      setBusy(true);
+      try {
+        const r = await fetch(ep + '/propose', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ format: fmt, intent, context: ctx, provider, model, apiKey }),
+        });
+        const data = (await r.json()) as { diff?: AgentDiff; error?: string };
+        if (!r.ok || !data.diff) throw new Error(data.error ?? 'propose failed');
+        setRealDiff(data.diff);
+        setSent(true);
+      } catch (e) {
+        notify('Agent · ' + (e instanceof Error ? e.message : String(e)));
+      } finally {
+        setBusy(false);
+      }
+      return;
+    }
     setSent(true);
   };
   const openDrop = (it: string, el: HTMLElement): void => {
@@ -787,17 +815,28 @@ export function App() {
                   </Section>
                 </>
               ) : (
-                <Section label={t('本次改动') + ' · 3'}>
-                  <ul className="plan">
-                    <li>{t('按 销量×单价 补齐「金额」列')}</li>
-                    <li>{t('新增「毛利率」列')}</li>
-                    <li>{t('标记偏离均值过大的异常值')}</li>
-                  </ul>
-                  <div className="summary">{t('+10 单元格 · +1 列公式 · 1 处标记')}</div>
-
-                  <Change tag={t('公式')} title="E2:E6" before={t('空')} after="=C×D" why={t('按 销量×单价 自动补齐金额')} />
-                  <Change tag={t('新列')} title="F2:F6" before={t('空')} after="41% / 37% …" why={t('新增毛利率列')} />
-                  <Change tag={t('标记')} title="C4" before="1500" after="1500" why={t('偏离均值约 8 倍,疑似录入错误')} />
+                <Section label={t('本次改动') + ' · ' + (realDiff ? realDiff.items.length : 3)}>
+                  {realDiff ? (
+                    <>
+                      <div className="summary">{realDiff.intent}</div>
+                      {realDiff.items.map((it) => (
+                        <Change key={it.editId} tag={it.badge} title={it.ref} before="" after={it.after ?? ''} why={it.label} />
+                      ))}
+                      {realDiff.items.length === 0 && <div className="te-d">{t('Agent 未提出改动')}</div>}
+                    </>
+                  ) : (
+                    <>
+                      <ul className="plan">
+                        <li>{t('按 销量×单价 补齐「金额」列')}</li>
+                        <li>{t('新增「毛利率」列')}</li>
+                        <li>{t('标记偏离均值过大的异常值')}</li>
+                      </ul>
+                      <div className="summary">{t('+10 单元格 · +1 列公式 · 1 处标记')}</div>
+                      <Change tag={t('公式')} title="E2:E6" before={t('空')} after="=C×D" why={t('按 销量×单价 自动补齐金额')} />
+                      <Change tag={t('新列')} title="F2:F6" before={t('空')} after="41% / 37% …" why={t('新增毛利率列')} />
+                      <Change tag={t('标记')} title="C4" before="1500" after="1500" why={t('偏离均值约 8 倍,疑似录入错误')} />
+                    </>
+                  )}
 
                   <div className="bulk">
                     <button className="btn ok"><IconCheck size={14} /> {t('全部接受')}</button>
@@ -842,6 +881,15 @@ export function App() {
                     }}
                     placeholder="sk-..."
                   />
+                  <label>opal-serve URL</label>
+                  <input
+                    value={server}
+                    onChange={(e) => {
+                      setServer(e.target.value);
+                      lsSet('oa.server', e.target.value);
+                    }}
+                    placeholder="http://localhost:4319"
+                  />
                   <div className="note">
                     <IconHelp size={13} /> {t('密钥只存在你的浏览器本地,绝不上传服务器。')}
                   </div>
@@ -875,7 +923,7 @@ export function App() {
                   <button className={'model' + (cfgOpen ? ' on' : '')} onClick={() => setCfgOpen((v) => !v)}>
                     {curProvider.label} <IconChevron size={13} />
                   </button>
-                  <button className="send" title={t('发送')} onClick={send}><IconSend size={16} /></button>
+                  <button className="send" title={t('发送')} onClick={send} disabled={busy}><IconSend size={16} /></button>
                 </div>
               </div>
             </div>

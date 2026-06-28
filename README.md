@@ -58,6 +58,12 @@ opal-run --format excel --intent "fill amount = qty × price" --in book.xlsx --o
 # {"type":"propose:start",...} {"type":"diff:done",...} {"type":"commit:done","ok":true,"touchedParts":["xl/worksheets/sheet1.xml"],...}
 ```
 
+The cockpit UI talks to the runtime through a local HTTP bridge (`opal-serve`) — start it, then point the model panel's *opal-serve URL* at it (BYOK):
+
+```bash
+opal-serve   # GET /health · POST /propose {format,intent,context,provider,apiKey} · POST /commit {format,fileBase64,changeSet}
+```
+
 ## Develop
 
 ```bash
@@ -84,7 +90,7 @@ npm test -w @opal/writeback-surgical
 - [x] Word redline write-back (w:ins/w:del) + PDF form-fill adapter — propose→commit for excel/word/pdf/drawio
 - [x] Ribbon formatting applies to the live selection (bold/italic/colors/align/number-format)
 - [x] Electron desktop shell + electron-builder packaging config (12-language UI)
-- [ ] Wire the cockpit UI to the runtime via the Electron preload IPC bridge
+- [x] Cockpit wired to the runtime via a local HTTP bridge (opal-serve) — real propose→diff rendered with per-item accept/reject
 
 ## License
 
