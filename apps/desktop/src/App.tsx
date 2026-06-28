@@ -1227,150 +1227,282 @@ function DrawioPalette({ onPick }: { onPick: (s: string) => void }) {
   );
 }
 
+interface XY { x: number; y: number }
 interface BNode { id: string; x: number; y: number; w: number; h: number; inner: string; label: string }
 interface BEdge { id: string; from: string; to: string }
 
-/** 可交互 drawio 画板:左侧拖形状落子、移动节点、节点间拉箭头、双击改名、Del 删除。纯自绘 SVG。 */
+const GRID = 10;
+const snap = (v: number): number => Math.round(v / GRID) * GRID;
+const ndir = (p: XY, q: XY): XY => {
+  const dx = q.x - p.x, dy = q.y - p.y;
+  const l = Math.hypot(dx, dy) || 1;
+  return { x: dx / l, y: dy / l };
+};
+/** 射线从节点中心到目标点,与节点矩形边界的交点(周界连接,箭头贴边)。 */
+function perim(n: BNode, tx: number, ty: number): XY {
+  const cx = n.x + n.w / 2, cy = n.y + n.h / 2;
+  const dx = tx - cx, dy = ty - cy;
+  if (!dx && !dy) return { x: cx, y: cy };
+  const sx = Math.abs(dx) > 0.001 ? n.w / 2 / Math.abs(dx) : Infinity;
+  const sy = Math.abs(dy) > 0.001 ? n.h / 2 / Math.abs(dy) : Infinity;
+  const s = Math.min(sx, sy);
+  return { x: cx + dx * s, y: cy + dy * s };
+}
+/** drawio 风格正交路由:沿主轴从源侧中点出、到目标侧中点入,中段折返。 */
+function ortho(a: BNode, b: BNode): XY[] {
+  const acx = a.x + a.w / 2, acy = a.y + a.h / 2, bcx = b.x + b.w / 2, bcy = b.y + b.h / 2;
+  const dx = bcx - acx, dy = bcy - acy;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    const right = dx >= 0;
+    const p1 = { x: right ? a.x + a.w : a.x, y: acy };
+    const p2 = { x: right ? b.x : b.x + b.w, y: bcy };
+    const mx = (p1.x + p2.x) / 2;
+    return [p1, { x: mx, y: p1.y }, { x: mx, y: p2.y }, p2];
+  }
+  const down = dy >= 0;
+  const p1 = { x: acx, y: down ? a.y + a.h : a.y };
+  const p2 = { x: bcx, y: down ? b.y : b.y + b.h };
+  const my = (p1.y + p2.y) / 2;
+  return [p1, { x: p1.x, y: my }, { x: p2.x, y: my }, p2];
+}
+function roundedPath(pts: XY[], r = 8): string {
+  if (pts.length < 2) return '';
+  let d = `M ${pts[0]!.x} ${pts[0]!.y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i]!, prev = pts[i - 1]!, next = pts[i + 1]!;
+    const rr = Math.min(r, Math.hypot(prev.x - p.x, prev.y - p.y) / 2, Math.hypot(next.x - p.x, next.y - p.y) / 2);
+    const a = { x: p.x + ndir(p, prev).x * rr, y: p.y + ndir(p, prev).y * rr };
+    const c = { x: p.x + ndir(p, next).x * rr, y: p.y + ndir(p, next).y * rr };
+    d += ` L ${a.x} ${a.y} Q ${p.x} ${p.y} ${c.x} ${c.y}`;
+  }
+  const last = pts[pts.length - 1]!;
+  return d + ` L ${last.x} ${last.y}`;
+}
+function resizeNode(r: { box: BNode; k: string; sx: number; sy: number }, x: number, y: number): BNode {
+  const b = r.box;
+  let nx = b.x, ny = b.y, w = b.w, h = b.h;
+  const dx = x - r.sx, dy = y - r.sy;
+  if (r.k.includes('e')) w = b.w + dx;
+  if (r.k.includes('s')) h = b.h + dy;
+  if (r.k.includes('w')) { w = b.w - dx; nx = b.x + dx; }
+  if (r.k.includes('n')) { h = b.h - dy; ny = b.y + dy; }
+  return { ...b, x: snap(nx), y: snap(ny), w: snap(Math.max(40, w)), h: snap(Math.max(30, h)) };
+}
+const HANDLES: { k: string; fx: number; fy: number }[] = [
+  { k: 'nw', fx: 0, fy: 0 }, { k: 'n', fx: 0.5, fy: 0 }, { k: 'ne', fx: 1, fy: 0 },
+  { k: 'e', fx: 1, fy: 0.5 }, { k: 'se', fx: 1, fy: 1 }, { k: 's', fx: 0.5, fy: 1 },
+  { k: 'sw', fx: 0, fy: 1 }, { k: 'w', fx: 0, fy: 0.5 },
+];
+const PORTS: XY[] = [{ x: 0.5, y: 0 }, { x: 1, y: 0.5 }, { x: 0.5, y: 1 }, { x: 0, y: 0.5 }];
+
+/** 高度复刻 drawio 的交互画板:周界正交圆角连线、悬停连接点拖拽连线(绿色目标高亮)、8 缩放手柄、网格吸附、改名、删边删点、双击空白建节点。 */
 function DrawioBoard() {
   const t = useT();
   const [nodes, setNodes] = useState<BNode[]>([]);
   const [edges, setEdges] = useState<BEdge[]>([]);
   const [sel, setSel] = useState<string | null>(null);
-  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null);
-  const [conn, setConn] = useState<{ from: string; x: number; y: number } | null>(null);
+  const [selEdge, setSelEdge] = useState<string | null>(null);
+  const [hover, setHover] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
+  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null);
+  const [resize, setResize] = useState<{ id: string; k: string; box: BNode; sx: number; sy: number } | null>(null);
+  const [conn, setConn] = useState<{ from: string; x: number; y: number; tgt: string | null } | null>(null);
   const ref = useRef<HTMLDivElement | null>(null);
   const idRef = useRef(0);
 
-  const pt = (e: { clientX: number; clientY: number }): { x: number; y: number } => {
+  const pt = (e: { clientX: number; clientY: number }): XY => {
     const r = ref.current?.getBoundingClientRect();
     return { x: e.clientX - (r?.left ?? 0), y: e.clientY - (r?.top ?? 0) };
   };
-  const center = (n: BNode): { x: number; y: number } => ({ x: n.x + n.w / 2, y: n.y + n.h / 2 });
-  const hit = (x: number, y: number, not?: string): BNode | undefined =>
+  const nodeAt = (x: number, y: number, not?: string): BNode | undefined =>
     [...nodes].reverse().find((n) => n.id !== not && x >= n.x && x <= n.x + n.w && y >= n.y && y <= n.y + n.h);
-
+  const addNode = (x: number, y: number, inner: string, label: string): void => {
+    const id = 'n' + ++idRef.current;
+    setNodes((ns) => [...ns, { id, x: snap(x - 45), y: snap(y - 27), w: 90, h: 54, inner, label }]);
+    setSel(id);
+    setSelEdge(null);
+  };
   const onDrop = (e: DragEvent<HTMLDivElement>): void => {
     e.preventDefault();
     const raw = e.dataTransfer.getData('opal/shape');
     if (!raw) return;
     const s = JSON.parse(raw) as { name: string; inner: string };
     const { x, y } = pt(e);
-    const id = 'n' + ++idRef.current;
-    setNodes((ns) => [...ns, { id, x: x - 45, y: y - 27, w: 90, h: 54, inner: s.inner, label: s.name }]);
-    setSel(id);
+    addNode(x, y, s.inner, s.name);
+  };
+
+  const onMove = (e: { clientX: number; clientY: number }): void => {
+    if (!drag && !conn && !resize) return;
+    const { x, y } = pt(e);
+    if (drag) setNodes((ns) => ns.map((n) => (n.id === drag.id ? { ...n, x: snap(x - drag.dx), y: snap(y - drag.dy) } : n)));
+    if (resize) setNodes((ns) => ns.map((n) => (n.id === resize.id ? resizeNode(resize, x, y) : n)));
+    if (conn) {
+      const tg = nodeAt(x, y, conn.from);
+      setConn((c) => (c ? { ...c, x, y, tgt: tg?.id ?? null } : c));
+    }
+  };
+  const onUp = (): void => {
+    if (conn && conn.tgt) {
+      const to = conn.tgt;
+      setEdges((es) => (es.some((d) => d.from === conn.from && d.to === to) ? es : [...es, { id: 'e' + ++idRef.current, from: conn.from, to }]));
+    }
+    setDrag(null);
+    setConn(null);
+    setResize(null);
+  };
+  const capture = (e: { pointerId: number }): void => {
+    try {
+      ref.current?.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
   };
 
   useEffect(() => {
-    if (!drag && !conn) return;
-    const move = (e: PointerEvent): void => {
-      const { x, y } = pt(e);
-      if (drag) setNodes((ns) => ns.map((n) => (n.id === drag.id ? { ...n, x: x - drag.dx, y: y - drag.dy } : n)));
-      if (conn) setConn((c) => (c ? { ...c, x, y } : c));
-    };
-    const up = (e: PointerEvent): void => {
-      if (conn) {
-        const { x, y } = pt(e);
-        const target = hit(x, y, conn.from);
-        if (target) setEdges((es) => [...es, { id: 'e' + ++idRef.current, from: conn.from, to: target.id }]);
-      }
-      setDrag(null);
-      setConn(null);
-    };
-    window.addEventListener('pointermove', move);
-    window.addEventListener('pointerup', up);
-    return () => {
-      window.removeEventListener('pointermove', move);
-      window.removeEventListener('pointerup', up);
-    };
-  }, [drag, conn, nodes]);
-
-  useEffect(() => {
     const k = (e: KeyboardEvent): void => {
-      if ((e.key === 'Delete' || e.key === 'Backspace') && sel && !editing) {
-        setNodes((ns) => ns.filter((n) => n.id !== sel));
-        setEdges((es) => es.filter((ed) => ed.from !== sel && ed.to !== sel));
-        setSel(null);
+      if ((e.key === 'Delete' || e.key === 'Backspace') && !editing) {
+        if (sel) {
+          setNodes((ns) => ns.filter((n) => n.id !== sel));
+          setEdges((es) => es.filter((ed) => ed.from !== sel && ed.to !== sel));
+          setSel(null);
+        } else if (selEdge) {
+          setEdges((es) => es.filter((ed) => ed.id !== selEdge));
+          setSelEdge(null);
+        }
       }
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
-  }, [sel, editing]);
+  }, [sel, selEdge, editing]);
 
   return (
-    <div className="drawio-board" ref={ref} onDragOver={(e) => e.preventDefault()} onDrop={onDrop} onPointerDown={() => setSel(null)}>
+    <div
+      className="drawio-board"
+      ref={ref}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={onDrop}
+      onPointerMove={onMove}
+      onPointerUp={onUp}
+      onPointerDown={() => {
+        setSel(null);
+        setSelEdge(null);
+      }}
+      onDoubleClick={(e) => {
+        if (e.target === ref.current || (e.target as HTMLElement).classList.contains('board-svg')) {
+          const { x, y } = pt(e);
+          addNode(x, y, '<rect x="4" y="5" width="32" height="20" rx="2"/>', t('文本'));
+        }
+      }}
+    >
       <svg className="board-svg">
         <defs>
-          <marker id="opal-arr" markerWidth="9" markerHeight="9" refX="7.5" refY="3" orient="auto">
-            <path d="M0,0 L8,3 L0,6 z" fill="#7a8090" />
+          <marker id="opal-arr" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="#5f6673" />
+          </marker>
+          <marker id="opal-arr-sel" markerWidth="10" markerHeight="10" refX="8" refY="4" orient="auto">
+            <path d="M0,0 L8,4 L0,8 z" fill="var(--accent)" />
           </marker>
         </defs>
         {edges.map((ed) => {
           const a = nodes.find((n) => n.id === ed.from);
           const b = nodes.find((n) => n.id === ed.to);
           if (!a || !b) return null;
-          const c1 = center(a);
-          const c2 = center(b);
-          return <line key={ed.id} x1={c1.x} y1={c1.y} x2={c2.x} y2={c2.y} stroke="#7a8090" strokeWidth={1.5} markerEnd="url(#opal-arr)" />;
+          const d = roundedPath(ortho(a, b));
+          const on = selEdge === ed.id;
+          return (
+            <g key={ed.id}>
+              <path d={d} fill="none" stroke="transparent" strokeWidth={10} style={{ pointerEvents: 'stroke', cursor: 'pointer' }} onPointerDown={(e) => { e.stopPropagation(); setSelEdge(ed.id); setSel(null); }} />
+              <path d={d} fill="none" stroke={on ? 'var(--accent)' : '#5f6673'} strokeWidth={on ? 2 : 1.5} markerEnd={`url(#${on ? 'opal-arr-sel' : 'opal-arr'})`} style={{ pointerEvents: 'none' }} />
+            </g>
+          );
         })}
         {conn
           ? (() => {
               const a = nodes.find((n) => n.id === conn.from);
               if (!a) return null;
-              const c = center(a);
-              return <line x1={c.x} y1={c.y} x2={conn.x} y2={conn.y} stroke="var(--accent)" strokeWidth={1.5} strokeDasharray="4 3" />;
+              const p1 = perim(a, conn.x, conn.y);
+              return <line x1={p1.x} y1={p1.y} x2={conn.x} y2={conn.y} stroke="var(--accent)" strokeWidth={1.6} strokeDasharray="5 3" markerEnd="url(#opal-arr-sel)" />;
             })()
           : null}
       </svg>
-      {nodes.map((n) => (
-        <div
-          key={n.id}
-          className={'bnode' + (sel === n.id ? ' sel' : '')}
-          style={{ left: n.x, top: n.y, width: n.w, height: n.h }}
-          onPointerDown={(e) => {
-            e.stopPropagation();
-            setSel(n.id);
-            const { x, y } = pt(e);
-            setDrag({ id: n.id, dx: x - n.x, dy: y - n.y });
-          }}
-          onDoubleClick={(e) => {
-            e.stopPropagation();
-            setEditing(n.id);
-          }}
-        >
-          <svg viewBox="0 0 40 30" fill="none" stroke="#3a3f4b" strokeWidth={1.2} dangerouslySetInnerHTML={{ __html: n.inner }} />
-          {editing === n.id ? (
-            <input
-              className="bnode-edit"
-              autoFocus
-              defaultValue={n.label}
-              onBlur={(e) => {
-                const v = e.target.value;
-                setNodes((ns) => ns.map((m) => (m.id === n.id ? { ...m, label: v } : m)));
-                setEditing(null);
-              }}
-              onKeyDown={(e) => {
-                if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
-              }}
-              onPointerDown={(e) => e.stopPropagation()}
-            />
-          ) : (
-            <span className="bnode-label">{n.label}</span>
-          )}
-          {sel === n.id && (
-            <span
-              className="bnode-handle"
-              title={t('拖到另一个节点连线')}
-              onPointerDown={(e) => {
-                e.stopPropagation();
-                const c = center(n);
-                setConn({ from: n.id, x: c.x, y: c.y });
-              }}
-            />
-          )}
-        </div>
-      ))}
-      {nodes.length === 0 && <div className="board-hint">{t('从左侧拖拽形状到画板,或在右侧让 Agent 画图')}</div>}
+
+      {nodes.map((n) => {
+        const isSel = sel === n.id;
+        const isHover = hover === n.id;
+        const isTgt = conn?.tgt === n.id;
+        return (
+          <div
+            key={n.id}
+            className={'bnode' + (isSel ? ' sel' : '') + (isHover && !isSel ? ' hover' : '') + (isTgt ? ' tgt' : '')}
+            style={{ left: n.x, top: n.y, width: n.w, height: n.h }}
+            onPointerEnter={() => setHover(n.id)}
+            onPointerLeave={() => setHover((h) => (h === n.id ? null : h))}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              capture(e);
+              setSel(n.id);
+              setSelEdge(null);
+              const { x, y } = pt(e);
+              setDrag({ id: n.id, dx: x - n.x, dy: y - n.y });
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setEditing(n.id);
+            }}
+          >
+            <svg viewBox="0 0 40 30" preserveAspectRatio="none" fill="none" stroke="#3a3f4b" strokeWidth={1.1} dangerouslySetInnerHTML={{ __html: n.inner }} />
+            {editing === n.id ? (
+              <input
+                className="bnode-edit"
+                autoFocus
+                defaultValue={n.label}
+                onBlur={(e) => {
+                  const v = e.target.value;
+                  setNodes((ns) => ns.map((m) => (m.id === n.id ? { ...m, label: v } : m)));
+                  setEditing(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span className="bnode-label">{n.label}</span>
+            )}
+            {(isHover || isSel) && !drag && !resize
+              ? PORTS.map((p, i) => (
+                  <span
+                    key={i}
+                    className="bport"
+                    style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      capture(e);
+                      const { x, y } = pt(e);
+                      setConn({ from: n.id, x, y, tgt: null });
+                    }}
+                  />
+                ))
+              : null}
+            {isSel
+              ? HANDLES.map((h) => (
+                  <span
+                    key={h.k}
+                    className={'bhandle h-' + h.k}
+                    style={{ left: `${h.fx * 100}%`, top: `${h.fy * 100}%` }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      capture(e);
+                      const { x, y } = pt(e);
+                      setResize({ id: n.id, k: h.k, box: n, sx: x, sy: y });
+                    }}
+                  />
+                ))
+              : null}
+          </div>
+        );
+      })}
+      {nodes.length === 0 && <div className="board-hint">{t('从左侧拖拽形状到画板,或双击空白处新建;拖节点边缘圆点连线')}</div>}
     </div>
   );
 }
