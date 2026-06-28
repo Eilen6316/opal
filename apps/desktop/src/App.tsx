@@ -737,6 +737,9 @@ export function App() {
         <main className={'body' + (fmt === 'drawio' ? ' three' : '')}>
           {fmt === 'drawio' && <DrawioPalette onPick={(s) => notify(t('插入形状') + ' · ' + s)} />}
           <section className="editor">
+            {fmt === 'drawio' ? (
+              <DrawioToolbar onAct={act} />
+            ) : (
             <div className="ribbon">
               <div className="ribbon-tabs">
                 {RIBBONS[fmt].map((rt, i) => (
@@ -786,6 +789,7 @@ export function App() {
                 })}
               </div>
             </div>
+            )}
             <div className={'canvas' + (isExcel ? ' excel' : fmt === 'drawio' ? ' board' : ' doc')}>
               {isExcel ? (
                 <table className="sheet full">
@@ -1165,6 +1169,29 @@ function ComboCell({ it, onOpen }: { it: string; onOpen: OnOpen }) {
       <span className="rc-val">{t(COMBO[it] ?? '')}</span>
       <span className="caret">▾</span>
     </button>
+  );
+}
+
+/** drawio 顶部工具栏(仿 next-ai-drawio):单行图标,取代 Office 选项卡式功能区。 */
+const DTOOLS = ['选择', '添加节点', '连线', '文本', '自由绘制', '填充色', '线条', '圆角', '阴影', '形状'];
+function DrawioToolbar({ onAct }: { onAct: OnOpen }) {
+  const t = useT();
+  return (
+    <div className="dtoolbar">
+      <button className="dtool" title={t('撤销')} onClick={(e) => onAct('撤销', e.currentTarget)}><IconUndo size={16} /></button>
+      <span className="dsep" />
+      {DTOOLS.map((it) => {
+        const Ico = FUNC_ICONS[it];
+        const accent = it === '填充色' ? ' ic-amber' : '';
+        return (
+          <button key={it} className={'dtool' + accent} title={t(it)} onClick={(e) => onAct(it, e.currentTarget)}>
+            {Ico ? <Ico size={16} /> : it.slice(0, 1)}
+          </button>
+        );
+      })}
+      <span className="grow" />
+      <span className="dzoom"><IconSearch size={13} /> 100%</span>
+    </div>
   );
 }
 
