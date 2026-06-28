@@ -8,6 +8,7 @@ import {
   FUNC_ICONS,
 } from './icons.js';
 import { LANGS, makeT, TContext, useT, type Lang } from './i18n.js';
+import { DRAWIO_SHAPES } from './drawio-shapes.js';
 
 /** 渐进披露驾驶舱。风格参照 Next AI Drawio:纯白、分区块、线性图标、无 emoji。五语 i18n(t 包裹显示文案)。 */
 
@@ -1195,52 +1196,51 @@ function DrawioToolbar({ onAct }: { onAct: OnOpen }) {
   );
 }
 
-/** drawio 左侧形状面板(仿 next-ai-drawio):分类 + 基础流程图形状。 */
-const PALETTE: { cat: string; shapes: { k: string; inner: string }[] }[] = [
-  {
-    cat: '通用',
-    shapes: [
-      { k: '矩形', inner: '<rect x="3" y="5" width="30" height="16" rx="1"/>' },
-      { k: '圆角矩形', inner: '<rect x="3" y="5" width="30" height="16" rx="5"/>' },
-      { k: '椭圆', inner: '<ellipse cx="18" cy="13" rx="15" ry="8"/>' },
-      { k: '菱形', inner: '<polygon points="18,4 33,13 18,22 3,13"/>' },
-      { k: '平行四边形', inner: '<polygon points="9,5 33,5 27,21 3,21"/>' },
-      { k: '六边形', inner: '<polygon points="10,5 26,5 33,13 26,21 10,21 3,13"/>' },
-      { k: '三角形', inner: '<polygon points="18,4 33,21 3,21"/>' },
-      { k: '圆柱', inner: '<path d="M3 9 v8 a15 4 0 0 0 30 0 v-8"/><ellipse cx="18" cy="9" rx="15" ry="4"/>' },
-      { k: '云', inner: '<path d="M11 19 a5 5 0 0 1 0 -10 a6 6 0 0 1 11 -2 a5 5 0 0 1 4 12 z"/>' },
-    ],
-  },
-  {
-    cat: '流程图',
-    shapes: [
-      { k: '开始/结束', inner: '<rect x="3" y="6" width="30" height="14" rx="7"/>' },
-      { k: '处理', inner: '<rect x="3" y="5" width="30" height="16"/><line x1="7" y1="5" x2="7" y2="21"/><line x1="29" y1="5" x2="29" y2="21"/>' },
-      { k: '判定', inner: '<polygon points="18,4 33,13 18,22 3,13"/>' },
-      { k: '数据', inner: '<polygon points="9,5 33,5 27,21 3,21"/>' },
-      { k: '文档', inner: '<path d="M3 5 h30 v12 q-7.5 4 -15 0 q-7.5 -4 -15 0 z"/>' },
-      { k: '连线', inner: '<line x1="4" y1="13" x2="30" y2="13"/><polyline points="26,9 32,13 26,17"/>' },
-    ],
-  },
+/** drawio 左侧形状面板(高度还原 jgraph/drawio:可折叠 通用/杂项/高级 + 搜索 + 便笺本 + 更多图形)。 */
+const PAL_CATS: { key: 'general' | 'misc' | 'advanced'; label: string }[] = [
+  { key: 'general', label: '通用' },
+  { key: 'misc', label: '杂项' },
+  { key: 'advanced', label: '高级' },
 ];
 
 function DrawioPalette({ onPick }: { onPick: (s: string) => void }) {
   const t = useT();
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState<Record<string, boolean>>({ general: true, misc: false, advanced: true });
+  const query = q.trim();
   return (
     <aside className="palette">
-      <div className="pal-search"><IconSearch size={13} /> <span>{t('搜索形状')}</span></div>
-      {PALETTE.map((cat) => (
-        <div className="pal-cat" key={cat.cat}>
-          <div className="pal-cat-h">{t(cat.cat)}</div>
-          <div className="pal-grid">
-            {cat.shapes.map((s) => (
-              <button key={s.k} className="pal-shape" title={t(s.k)} onClick={() => onPick(t(s.k))}>
-                <svg viewBox="0 0 36 26" fill="none" stroke="currentColor" strokeWidth={1.5} dangerouslySetInnerHTML={{ __html: s.inner }} />
-              </button>
-            ))}
+      <div className="pal-search">
+        <IconSearch size={13} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('搜索形状')} />
+      </div>
+      <div className="pal-cat">
+        <div className="pal-cat-h">{t('便笺本')}</div>
+        <div className="pal-scratch">{t('把元素拖至此处')}</div>
+      </div>
+      {PAL_CATS.map((cat) => {
+        const shapes = DRAWIO_SHAPES[cat.key].filter((s) => !query || s.name.includes(query));
+        const isOpen = query ? shapes.length > 0 : open[cat.key] !== false;
+        if (query && shapes.length === 0) return null;
+        return (
+          <div className="pal-cat" key={cat.key}>
+            <button className="pal-cat-h click" onClick={() => setOpen((o) => ({ ...o, [cat.key]: !(o[cat.key] !== false) }))}>
+              <span className={'tri' + (isOpen ? ' open' : '')}>▸</span> {t(cat.label)}
+              <span className="pal-n">{DRAWIO_SHAPES[cat.key].length}</span>
+            </button>
+            {isOpen && (
+              <div className="pal-grid">
+                {shapes.map((s) => (
+                  <button key={s.name} className="pal-shape" title={s.name} onClick={() => onPick(s.name)}>
+                    <svg viewBox="0 0 40 30" fill="none" stroke="currentColor" strokeWidth={1.4} dangerouslySetInnerHTML={{ __html: s.inner }} />
+                  </button>
+                ))}
+              </div>
+            )}
           </div>
-        </div>
-      ))}
+        );
+      })}
+      <button className="pal-more"><IconPlus size={13} /> {t('更多图形')}</button>
     </aside>
   );
 }
