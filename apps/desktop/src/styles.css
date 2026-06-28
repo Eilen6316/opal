@@ -41,6 +41,7 @@ svg { display: block; }
 .topbar { height: 52px; flex-shrink: 0; display: flex; align-items: center; gap: 14px; padding: 0 18px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .brand { display: flex; align-items: center; gap: 9px; font-weight: 600; font-size: 14px; letter-spacing: -0.01em; }
 .brand .mark { color: var(--text); display: grid; place-items: center; }
+.brand-logo { height: 30px; width: auto; display: block; }
 .brand .sub { color: var(--faint); font-weight: 450; }
 /* 工作区格式切换(菜单栏随之联动) */
 .fmttabs { display: flex; gap: 2px; margin-left: 14px; background: var(--fill); border-radius: 9px; padding: 2px; }

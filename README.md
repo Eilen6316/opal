@@ -1,6 +1,8 @@
-# OtterPatch
+<p align="center">
+  <img src="./assets/logo.png" alt="OtterPatch" width="440" />
+</p>
 
-**English** · [中文](./README.zh.md) · [日本語](./README.ja.md) · [Français](./README.fr.md) · [한국어](./README.ko.md)
+<p align="center"><b>English</b> · <a href="./README.zh.md">中文</a> · <a href="./README.ja.md">日本語</a> · <a href="./README.fr.md">Français</a> · <a href="./README.ko.md">한국어</a></p>
 
 > 🦦 **O**ffice **T**ransforms · **T**racked · **E**dited & **R**eviewed · surgical **Patch** write-back — an Agent-driven, reviewable **safe-commit layer** for documents.
 > Circle a region → say what you want → review the diff → high-fidelity write-back.

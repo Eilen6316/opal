@@ -1,7 +1,7 @@
 import { lazy, Suspense, useEffect, useRef, useState } from 'react';
 import type { CSSProperties, DragEvent, ReactNode } from 'react';
 import {
-  IconGrid, IconSelect, IconArrow, IconStrike, IconPencil, IconHelp,
+  IconSelect, IconArrow, IconStrike, IconPencil, IconHelp,
   IconFilter, IconFlag, IconSigma, IconPaperclip, IconImage, IconClock,
   IconSend, IconChevron, IconSearch, IconDots, IconUndo, IconCheck, IconX,
   IconDoc, IconPlus,
@@ -710,8 +710,8 @@ export function App() {
       <div className="app">
         <header className="topbar">
           <div className="brand">
-            <span className="mark"><IconGrid size={18} /></span>
-            OtterPatch <span className="sub">{t('safe-commit layer')}</span>
+            <img className="brand-logo" src="/logo.png" alt="OtterPatch" />
+            <span className="sub">{t('safe-commit layer')}</span>
           </div>
           <div className="fmttabs">
             {FORMATS.map((f) => (
