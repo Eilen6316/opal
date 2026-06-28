@@ -2,7 +2,7 @@
  * 轻量可审阅 diff —— 由 ChangeSet 的 edits 直接派生(逐 edit:锚点引用 + 徽标 + 标签 + after)。
  * JSON 友好,供 MCP/CLI 消费;不依赖适配器 shadowApply(适配器仍为桩),因此 headless 即可用。
  */
-import type { ChangeSet, EditOp, LogicalAnchor } from '@otterpatch/core';
+import type { AbstractStyle, ChangeSet, EditOp, LogicalAnchor } from '@otterpatch/core';
 
 export type DiffBadge = 'add' | 'remove' | 'modify' | 'move';
 
@@ -12,6 +12,18 @@ export interface OtterPatchDiffItem {
   badge: DiffBadge;
   label: string;
   after?: string;
+  style?: AbstractStyle; // 格式类改动(标红/加粗/字色/数字格式)的结构化样式,供前端直接套用
+}
+
+function styleSummary(s: AbstractStyle): string {
+  const parts: string[] = [];
+  if (s.bgColor) parts.push('填充 ' + s.bgColor);
+  if (s.color) parts.push('字色 ' + s.color);
+  if (s.bold) parts.push('加粗');
+  if (s.italic) parts.push('斜体');
+  if (s.align) parts.push('对齐 ' + s.align);
+  if (s.numberFormat) parts.push('数字格式 ' + s.numberFormat);
+  return parts.join(' · ') || '套用格式';
 }
 export interface OtterPatchDiff {
   changeSetId: string;
@@ -35,7 +47,7 @@ function refOf(a: LogicalAnchor | undefined, fallback: string): string {
   }
 }
 
-function describe(op: EditOp): { badge: DiffBadge; label: string; after?: string } {
+function describe(op: EditOp): { badge: DiffBadge; label: string; after?: string; style?: AbstractStyle } {
   switch (op.kind) {
     case 'setValue':
       return { badge: 'modify', label: 'set value', after: String(op.value ?? '') };
@@ -48,9 +60,9 @@ function describe(op: EditOp): { badge: DiffBadge; label: string; after?: string
     case 'deleteRange':
       return { badge: 'remove', label: 'delete range' };
     case 'setStyle':
-      return { badge: 'modify', label: 'set style', after: JSON.stringify(op.style) };
+      return { badge: 'modify', label: styleSummary(op.style), style: op.style, after: styleSummary(op.style) };
     case 'setNumberFormat':
-      return { badge: 'modify', label: 'number format', after: op.pattern };
+      return { badge: 'modify', label: '数字格式 ' + op.pattern, style: { numberFormat: op.pattern }, after: op.pattern };
     case 'insertRows':
       return { badge: 'add', label: `insert ${op.count} row(s)` };
     case 'deleteRows':
@@ -83,6 +95,7 @@ export function buildDiff(cs: ChangeSet): OtterPatchDiff {
       const d = describe(e.op);
       const item: OtterPatchDiffItem = { editId: e.id, ref: refOf(cs.anchors[e.target], e.target), badge: d.badge, label: d.label };
       if (d.after !== undefined) item.after = d.after;
+      if (d.style) item.style = d.style;
       return item;
     }),
   };

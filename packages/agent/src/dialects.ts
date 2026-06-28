@@ -24,9 +24,23 @@ function newChangeSet(
 
 // ───────────────────────── Excel ─────────────────────────
 
+export interface ExcelStyle {
+  bold?: boolean;
+  italic?: boolean;
+  color?: string; // 字体色
+  bgColor?: string; // 填充/背景色(标红高亮即 bgColor)
+  align?: 'left' | 'center' | 'right';
+}
 export interface ExcelProposal {
   plan: string;
-  edits: Array<{ cell: string; op: 'setValue' | 'setFormula'; value?: CellValue; formula?: string }>;
+  edits: Array<{
+    cell: string;
+    op: 'setValue' | 'setFormula' | 'setStyle' | 'setNumberFormat';
+    value?: CellValue;
+    formula?: string;
+    style?: ExcelStyle;
+    pattern?: string; // setNumberFormat 的数字格式,如 0% / "¥"#,##0.00
+  }>;
 }
 
 function sheetOf(cell: string): string {
@@ -50,7 +64,11 @@ function buildExcelChangeSet(req: ProposeRequest, p: ExcelProposal): ChangeSet {
     const op: EditOp =
       e.op === 'setFormula'
         ? { family: 'value', kind: 'setFormula', formula: e.formula ?? '' }
-        : { family: 'value', kind: 'setValue', value: (e.value ?? null) as CellValue };
+        : e.op === 'setStyle'
+          ? { family: 'style', kind: 'setStyle', style: e.style ?? {} }
+          : e.op === 'setNumberFormat'
+            ? { family: 'style', kind: 'setNumberFormat', pattern: e.pattern ?? 'General' }
+            : { family: 'value', kind: 'setValue', value: (e.value ?? null) as CellValue };
     edits.push({ id: 'e' + i, target: aid, op });
   });
   return newChangeSet(req, p.plan, anchors, edits);
@@ -60,10 +78,12 @@ export const excelDialect: HostDialect = {
   format: 'excel',
   systemPrompt:
     '你是一个 Office 表格编辑 Agent。用户在电子表格里圈选了一块区域,把意图转成一组结构化修改建议,' +
-    '只能通过 propose_changeset 工具提交。规则:① 用 A1 引用(如 Sheet1!B1);② 只用 setValue / setFormula;' +
-    '③ 不直接执行,改动会先交用户逐条审阅。先给一句话 plan,再给 edits。',
+    '只能通过 propose_changeset 工具提交。规则:① 用 A1 引用(如 Sheet1!B1);② 可用 setValue / setFormula 改内容;' +
+    '③ 改格式用 setStyle:标红/高亮异常值用 style.bgColor(如 #ffd6d6),字体颜色 style.color,加粗 style.bold,对齐 style.align;' +
+    '数字格式(如百分比/货币)用 setNumberFormat 的 pattern(如 0% / "¥"#,##0.00);' +
+    '④ 不直接执行,改动会先交用户逐条审阅。先给一句话 plan,再给 edits。例:标红某异常单元格 → {cell:"Sheet1!C4", op:"setStyle", style:{bgColor:"#ffd6d6", color:"#d11", bold:true}}。',
   toolName: 'propose_changeset',
-  toolDescription: '提出对所选单元格的修改建议(不直接执行,交用户审阅)。用 A1 引用,只用 setValue/setFormula。',
+  toolDescription: '提出对所选单元格的修改建议(不直接执行,交用户审阅)。用 A1 引用;改内容用 setValue/setFormula,改格式(标红/加粗/字色/对齐)用 setStyle,数字格式用 setNumberFormat。',
   parameters: {
     type: 'object',
     properties: {
@@ -74,9 +94,21 @@ export const excelDialect: HostDialect = {
           type: 'object',
           properties: {
             cell: { type: 'string', description: 'A1 引用,如 Sheet1!B1' },
-            op: { type: 'string', enum: ['setValue', 'setFormula'] },
+            op: { type: 'string', enum: ['setValue', 'setFormula', 'setStyle', 'setNumberFormat'] },
             value: { description: 'setValue 的新值(字符串/数字/布尔/空)' },
             formula: { type: 'string', description: 'setFormula 的公式,如 =C2*D2' },
+            style: {
+              type: 'object',
+              description: 'setStyle 的格式:bold 加粗、color 字体色、bgColor 背景/标红色、align 对齐',
+              properties: {
+                bold: { type: 'boolean' },
+                italic: { type: 'boolean' },
+                color: { type: 'string', description: '字体色,如 #d11' },
+                bgColor: { type: 'string', description: '背景/标红色,如 #ffd6d6' },
+                align: { type: 'string', enum: ['left', 'center', 'right'] },
+              },
+            },
+            pattern: { type: 'string', description: 'setNumberFormat 的数字格式,如 0% 或 "¥"#,##0.00' },
           },
           required: ['cell', 'op'],
         },

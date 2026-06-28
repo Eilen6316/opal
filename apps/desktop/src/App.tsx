@@ -344,11 +344,6 @@ const EXAMPLES = [
   { Icon: IconSigma, t: '补公式 + 摘要', d: '按 销量×单价 补齐金额与毛利率,逐项确认', prompt: '为当前选区补齐缺失的计算列(如 金额=销量×单价、毛利率),逐项确认,并给一句话摘要' },
 ];
 
-const RECENT = [
-  { t: '清洗销售表', time: '刚刚' },
-  { t: '改公式 E2:E6', time: '2 分钟前' },
-  { t: '标红异常值', time: '今天 09:14' },
-];
 
 const MODEL_PROVIDERS = [
   { id: 'claude', label: 'Claude', model: 'claude-opus-4-8' },
@@ -384,7 +379,8 @@ const FMT_BIU: Record<string, 'bold' | 'italic' | 'underline'> = { B: 'bold', I:
 const FMT_ALIGN: Record<string, 'left' | 'center' | 'right'> = { 左对齐: 'left', 居中: 'center', 右对齐: 'right' };
 
 /** otterpatch-serve 的 /propose 返回的可审阅 diff(结构对齐 @otterpatch/runtime 的 OtterPatchDiff;此处只取 JSON 形状,不引 Node 包)。 */
-interface AgentDiffItem { editId: string; ref: string; badge: string; label: string; after?: string }
+interface AgentStyle { bold?: boolean; italic?: boolean; color?: string; bgColor?: string; align?: string; numberFormat?: string }
+interface AgentDiffItem { editId: string; ref: string; badge: string; label: string; after?: string; style?: AgentStyle }
 interface AgentDiff { changeSetId: string; hostId: string; intent: string; items: AgentDiffItem[] }
 
 function Section({ label, children, defaultOpen = true }: { label: string; children: ReactNode; defaultOpen?: boolean }) {
@@ -414,7 +410,7 @@ export function App() {
   const [provider, setProvider] = useState(() => lsGet('oa.provider', 'claude'));
   const [model, setModel] = useState(() => lsGet('oa.model', 'claude-opus-4-8'));
   const [apiKey, setApiKey] = useState(() => lsGet('oa.apiKey', ''));
-  const [server, setServer] = useState(() => lsGet('oa.server', ''));
+  const [server, setServer] = useState(() => lsGet('oa.server', 'http://localhost:4319'));
   const [uniSel, setUniSel] = useState<UniSel | null>(null);
   const [boardSel, setBoardSel] = useState<BoardSel | null>(null);
   const univerRef = useRef<SheetHandle>(null);
@@ -422,6 +418,7 @@ export function App() {
   const [playIdx, setPlayIdx] = useState(-1);
   const [playing, setPlaying] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
+  const [recent, setRecent] = useState<{ t: string; time: string }[]>([]);
   const [realDiff, setRealDiff] = useState<AgentDiff | null>(null);
   const [realCs, setRealCs] = useState<unknown>(null);
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
@@ -603,18 +600,26 @@ export function App() {
         setRealCs(data.changeSet ?? null);
         setRealDiff(data.diff);
         setAccepted(new Set(data.diff.items.map((it) => it.editId)));
+        if (theIntent.trim()) setRecent((r) => [{ t: theIntent.trim(), time: t('刚刚') }, ...r.filter((x) => x.t !== theIntent.trim())].slice(0, 6));
         const ops = diffToOps(data.diff);
         if (ops.length) void playOps(ops); // 把 Agent 的改动逐格"画"到网格上
         else setSent(true);
       } catch (e) {
-        setSendErr(e instanceof Error ? e.message : String(e));
+        const m = e instanceof Error ? e.message : String(e);
+        const refused = /failed to fetch|refused|ECONNREFUSED|networkerror|load failed/i.test(m);
+        setSendErr(
+          refused
+            ? `连不上本机 Agent 服务(${ep})。桌面版会自动启动它;若在浏览器里测试,请先运行:node apps/mcp-server/dist/serve.js`
+            : 'Agent · ' + m,
+        );
       } finally {
         setBusy(false);
       }
       return;
     }
-    // 无 serve+Key:演示态也完整播放"边画边改",让你先看到效果
-    void playOps(demoOps());
+    // 未配置 serve+Key:不再用 mock,提示连接真实 Agent
+    setCfgOpen(true);
+    setSendErr('未填写 API Key。请在下方「模型」里粘贴你所选厂商的 API Key(本机服务地址已默认填好),即可用真实大模型驱动表格。');
   };
   /** 退出「本次改动」回到建议视图,可发起新指令。 */
   const resetDiff = (): void => {
@@ -651,29 +656,23 @@ export function App() {
     setPlayIdx(ops.length);
     setPlaying(false);
   };
-  /** 演示用操作序列(无 serve 时也能完整看到"边画边改"的效果)。 */
-  const demoOps = (): GridOp[] => [
-    { a1: 'A1:F1', bold: true, bg: '#eef2ff', note: '加粗并高亮表头' },
-    { a1: 'E2', value: '=C2*D2', note: '按 销量×单价 补「金额」' },
-    { a1: 'E3', value: '=C3*D3', note: '按 销量×单价 补「金额」' },
-    { a1: 'E4', value: '=C4*D4', note: '按 销量×单价 补「金额」' },
-    { a1: 'E5', value: '=C5*D5', note: '按 销量×单价 补「金额」' },
-    { a1: 'E6', value: '=C6*D6', note: '按 销量×单价 补「金额」' },
-    { a1: 'C4', bg: '#ffe3e3', color: '#d11', note: '标红异常值 1500(≈8× 均值)' },
-  ];
-  /** 把 Agent 返回的 diff 转成可播放的网格操作:写值 +(异常/标红类)自动套红。 */
+  /** 把 Agent 返回的 diff 转成可播放的网格操作:setStyle→真实底色/字色/加粗;否则写值。 */
   const diffToOps = (d: AgentDiff): GridOp[] =>
     d.items
       .filter((it) => it.ref)
       .map((it) => {
         const a1 = it.ref.replace(/^.*!/, ''); // 去掉 Sheet1! 前缀,落到当前表
-        const flag = /异常|标红|outlier|红|error|错误/i.test((it.label ?? '') + (it.badge ?? ''));
-        return {
-          a1,
-          ...(it.after != null ? { value: it.after } : {}),
-          ...(flag ? { bg: '#ffe3e3', color: '#d11' } : {}),
-          note: it.label ?? it.badge,
-        };
+        const s = it.style;
+        if (s && (s.bgColor || s.color || s.bold)) {
+          return {
+            a1,
+            ...(s.bgColor ? { bg: s.bgColor } : {}),
+            ...(s.color ? { color: s.color } : {}),
+            ...(s.bold ? { bold: true } : {}),
+            note: it.label ?? it.badge,
+          };
+        }
+        return { a1, ...(it.after != null ? { value: it.after } : {}), note: it.label ?? it.badge };
       });
   /** 读入要写回的真实文件(.xlsx/.docx/.pdf/.drawio)为 base64。 */
   const onFile = (f: File | undefined): void => {
@@ -940,22 +939,25 @@ export function App() {
                   </Section>
 
                   <Section label={t('最近')}>
-                    {RECENT.map((r) => (
-                      <button key={r.t} className="recent">
-                        <span className="ic"><IconCheck size={15} /></span>
-                        <span>
-                          <div className="t">{t(r.t)}</div>
-                          <div className="time">{t(r.time)}</div>
-                        </span>
-                      </button>
-                    ))}
+                    {recent.length === 0 ? (
+                      <div className="te-d">{t('暂无最近 · 发送指令后会记录到这里')}</div>
+                    ) : (
+                      recent.map((r, i) => (
+                        <button key={i} className="recent" onClick={() => setIntent(r.t)}>
+                          <span className="ic"><IconCheck size={15} /></span>
+                          <span>
+                            <div className="t">{r.t}</div>
+                            <div className="time">{r.time}</div>
+                          </span>
+                        </button>
+                      ))
+                    )}
                   </Section>
                 </>
               ) : (
-                <Section label={t('本次改动') + ' · ' + (realDiff ? realDiff.items.length : 3)}>
+                <Section label={t('本次改动') + (realDiff ? ' · ' + realDiff.items.length : '')}>
                   <div className="diff-head">
                     <button className="back-btn" onClick={resetDiff} disabled={playing}>← {t('新指令')}</button>
-                    {!realDiff && <span className="demo-badge">{t('演示模式 · 未连接 serve')}</span>}
                   </div>
                   {playList.length > 0 && (
                     <div className="oplist">
@@ -1002,19 +1004,7 @@ export function App() {
                       })}
                       {realDiff.items.length === 0 && <div className="te-d">{t('Agent 未提出改动')}</div>}
                     </>
-                  ) : (
-                    <>
-                      <ul className="plan">
-                        <li>{t('按 销量×单价 补齐「金额」列')}</li>
-                        <li>{t('新增「毛利率」列')}</li>
-                        <li>{t('标记偏离均值过大的异常值')}</li>
-                      </ul>
-                      <div className="summary">{t('+10 单元格 · +1 列公式 · 1 处标记')}</div>
-                      <Change tag={t('公式')} title="E2:E6" before={t('空')} after="=C×D" why={t('按 销量×单价 自动补齐金额')} />
-                      <Change tag={t('新列')} title="F2:F6" before={t('空')} after="41% / 37% …" why={t('新增毛利率列')} />
-                      <Change tag={t('标记')} title="C4" before="1500" after="1500" why={t('偏离均值约 8 倍,疑似录入错误')} />
-                    </>
-                  )}
+                  ) : null}
 
                   <div className="bulk">
                     {realDiff ? (
@@ -1033,9 +1023,7 @@ export function App() {
                         <button className="btn" disabled={busy} onClick={() => void doCommit([...accepted])}>{t('部分接受')}</button>
                         <button className="btn no" onClick={() => setAccepted(new Set())}><IconX size={14} /> {t('拒绝')}</button>
                       </>
-                    ) : (
-                      <div className="te-d">{t('演示数据 · 连接 otterpatch-serve 并填 API Key 后,这里才是真实可写回的改动')}</div>
-                    )}
+                    ) : null}
                   </div>
                 </Section>
               )}
@@ -1075,8 +1063,9 @@ export function App() {
                     }}
                     placeholder="sk-..."
                   />
-                  <label>otterpatch-serve URL</label>
+                  <label>{t('本机服务地址(默认即可,一般无需修改)')}</label>
                   <input
+                    className="dim"
                     value={server}
                     onChange={(e) => {
                       setServer(e.target.value);
@@ -1085,7 +1074,7 @@ export function App() {
                     placeholder="http://localhost:4319"
                   />
                   <div className="note">
-                    <IconHelp size={13} /> {t('密钥只存在你的浏览器本地,绝不上传服务器。')}
+                    <IconHelp size={13} /> {t('密钥只存在你的浏览器本地,绝不上传服务器;桌面版会自动启动本机服务。')}
                   </div>
                 </div>
               )}

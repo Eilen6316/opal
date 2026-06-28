@@ -6,8 +6,33 @@
  */
 const { app, BrowserWindow, shell } = require('electron');
 const path = require('node:path');
+const fs = require('node:fs');
+const { spawn } = require('node:child_process');
 
 const isDev = !!process.env.OTTERPATCH_DEV;
+
+// 自动启动本机 Agent 服务(otterpatch-serve),让非技术用户开箱即用、无需手动跑命令。
+let serveProc = null;
+function startServe() {
+  try {
+    const candidates = [
+      path.join(__dirname, '..', '..', 'mcp-server', 'dist', 'serve.js'), // 开发(monorepo)
+      path.join(process.resourcesPath || '', 'serve', 'serve.js'), // 打包(extraResources)
+    ];
+    const servePath = candidates.find((p) => p && fs.existsSync(p));
+    if (!servePath) return;
+    serveProc = spawn(process.execPath, [servePath], {
+      env: { ...process.env, ELECTRON_RUN_AS_NODE: '1' },
+      stdio: 'ignore',
+      windowsHide: true,
+    });
+    serveProc.on('error', () => {
+      serveProc = null;
+    });
+  } catch {
+    /* 服务可选;失败时 UI 会提示手动启动 */
+  }
+}
 
 function createWindow() {
   const win = new BrowserWindow({
@@ -39,7 +64,21 @@ function createWindow() {
   });
 }
 
-app.whenReady().then(createWindow);
+app.whenReady().then(() => {
+  startServe();
+  createWindow();
+});
+
+app.on('will-quit', () => {
+  if (serveProc) {
+    try {
+      serveProc.kill();
+    } catch {
+      /* ignore */
+    }
+    serveProc = null;
+  }
+});
 
 app.on('window-all-closed', () => {
   if (process.platform !== 'darwin') app.quit();
