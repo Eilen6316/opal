@@ -9,6 +9,7 @@ import {
 } from './icons.js';
 import { LANGS, makeT, TContext, useT, type Lang } from './i18n.js';
 import { DRAWIO_SHAPES } from './drawio-shapes.js';
+import type { UniSel } from './UniverSheet.js';
 
 /** 真 Univer 表格(体积大 → 懒加载,仅 Excel 用)。 */
 const UniverSheet = lazy(() => import('./UniverSheet.js'));
@@ -411,6 +412,7 @@ export function App() {
   const [model, setModel] = useState(() => lsGet('oa.model', 'claude-opus-4-8'));
   const [apiKey, setApiKey] = useState(() => lsGet('oa.apiKey', ''));
   const [server, setServer] = useState(() => lsGet('oa.server', ''));
+  const [uniSel, setUniSel] = useState<UniSel | null>(null);
   const [realDiff, setRealDiff] = useState<AgentDiff | null>(null);
   const [realCs, setRealCs] = useState<unknown>(null);
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
@@ -574,7 +576,7 @@ export function App() {
   };
   /** 配了 opal-serve 端点 + API Key → 走真实 runtime(propose→diff);否则用内置演示。 */
   const send = async (): Promise<void> => {
-    const ctx = selectionContext();
+    const ctx = isExcel && uniSel ? uniSel.text : selectionContext();
     const ep = server.trim().replace(/\/$/, '');
     if (ep && apiKey) {
       setBusy(true);
@@ -797,7 +799,7 @@ export function App() {
             <div className={'canvas' + (isExcel ? ' excel' : fmt === 'drawio' ? ' board' : ' doc')}>
               {isExcel ? (
                 <Suspense fallback={<div className="univer-loading">{t('加载表格引擎…')}</div>}>
-                  <UniverSheet />
+                  <UniverSheet onSelection={setUniSel} />
                 </Suspense>
               ) : fmt === 'drawio' ? (
                 <DrawioBoard />
@@ -816,9 +818,9 @@ export function App() {
           <aside className="rail">
             <div className="selbar">
               <span className="dot" />
-              {t('选区')} <span className="ref">{isExcel ? rangeLabel : '—'}</span>
+              {t('选区')} <span className="ref">{isExcel ? (uniSel?.a1 ?? '—') : '—'}</span>
               <span className="grow" />
-              <span>{isExcel ? `${selRows} × ${selCols} ${t('单元格')}` : `${t(curFmt.label)} ${t('工作区')}`}</span>
+              <span>{isExcel ? (uniSel ? `${uniSel.rows} × ${uniSel.cols} ${t('单元格')}` : '—') : `${t(curFmt.label)} ${t('工作区')}`}</span>
             </div>
 
             <div className="rail-body">
@@ -986,7 +988,7 @@ export function App() {
                   <span className="dot" />{' '}
                   {isExcel ? (
                     <>
-                      {t('已选')} <b>{rangeLabel}</b> · {selRows}×{selCols}
+                      {t('已选')} <b>{uniSel?.a1 ?? '—'}</b>{uniSel ? ` · ${uniSel.rows}×${uniSel.cols}` : ''}
                     </>
                   ) : (
                     <>
