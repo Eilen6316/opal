@@ -421,6 +421,7 @@ export function App() {
   const [playList, setPlayList] = useState<GridOp[]>([]);
   const [playIdx, setPlayIdx] = useState(-1);
   const [playing, setPlaying] = useState(false);
+  const [sendErr, setSendErr] = useState<string | null>(null);
   const [realDiff, setRealDiff] = useState<AgentDiff | null>(null);
   const [realCs, setRealCs] = useState<unknown>(null);
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
@@ -586,7 +587,8 @@ export function App() {
   const send = async (intentOverride?: string): Promise<void> => {
     const theIntent = intentOverride ?? intent;
     if (intentOverride && intentOverride !== intent) setIntent(intentOverride);
-    const ctx = isExcel && uniSel ? uniSel.text : fmt === 'drawio' && boardSel ? boardSel.context : selectionContext();
+    const ctx = isExcel ? (uniSel ? uniSel.text : '(用户未圈选具体区域,请基于整张表理解)') : fmt === 'drawio' && boardSel ? boardSel.context : selectionContext();
+    setSendErr(null);
     const ep = server.trim().replace(/\/$/, '');
     if (ep && apiKey) {
       setBusy(true);
@@ -605,7 +607,7 @@ export function App() {
         if (ops.length) void playOps(ops); // 把 Agent 的改动逐格"画"到网格上
         else setSent(true);
       } catch (e) {
-        notify('Agent · ' + (e instanceof Error ? e.message : String(e)));
+        setSendErr(e instanceof Error ? e.message : String(e));
       } finally {
         setBusy(false);
       }
@@ -895,7 +897,23 @@ export function App() {
             </div>
 
             <div className="rail-body">
-              {!sent ? (
+              {busy ? (
+                <div className="agent-busy">
+                  <span className="spin" />
+                  <div className="ab-t">{t('Agent 正在分析…')}</div>
+                  <div className="ab-d">{uniSel ? uniSel.a1 : t('整张表')}</div>
+                </div>
+              ) : sendErr ? (
+                <div className="agent-err">
+                  <div className="ae-i"><IconX size={18} /></div>
+                  <div className="ae-t">{t('Agent 调用失败')}</div>
+                  <div className="ae-m">{sendErr}</div>
+                  <div className="ae-acts">
+                    <button className="btn solid" onClick={() => void send()}>{t('重试')}</button>
+                    <button className="btn" onClick={() => setSendErr(null)}>{t('返回')}</button>
+                  </div>
+                </div>
+              ) : !sent ? (
                 <>
                   <Section label={t('建议操作')}>
                     {EXAMPLES.map((e) => {
@@ -1093,7 +1111,7 @@ export function App() {
                   onKeyDown={(e) => {
                     if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
                       e.preventDefault();
-                      if (!busy && !(isExcel && !uniSel)) void send();
+                      if (!busy) void send();
                     }
                   }}
                   placeholder={t(PLACEHOLDERS[fmt])}
@@ -1114,7 +1132,7 @@ export function App() {
                   <button className={'model' + (cfgOpen ? ' on' : '')} onClick={() => setCfgOpen((v) => !v)}>
                     {curProvider.label} <IconChevron size={13} />
                   </button>
-                  <button className="send" title={t('发送')} onClick={() => void send()} disabled={busy || (isExcel && !uniSel)}><IconSend size={16} /></button>
+                  <button className="send" title={t('发送')} onClick={() => void send()} disabled={busy}><IconSend size={16} /></button>
                 </div>
               </div>
             </div>
