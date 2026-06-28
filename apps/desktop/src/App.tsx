@@ -577,7 +577,7 @@ export function App() {
   };
   /** 配了 opal-serve 端点 + API Key → 走真实 runtime(propose→diff);否则用内置演示。 */
   const send = async (): Promise<void> => {
-    const ctx = isExcel && uniSel ? uniSel.text : fmt === 'drawio' && boardSel ? boardSel.text : selectionContext();
+    const ctx = isExcel && uniSel ? uniSel.text : fmt === 'drawio' && boardSel ? boardSel.context : selectionContext();
     const ep = server.trim().replace(/\/$/, '');
     if (ep && apiKey) {
       setBusy(true);
@@ -992,7 +992,7 @@ export function App() {
                       {t('已选')} <b>{uniSel?.a1 ?? '—'}</b>{uniSel ? ` · ${uniSel.rows}×${uniSel.cols}` : ''}
                     </>
                   ) : fmt === 'drawio' && boardSel ? (
-                    <>{boardSel.text}</>
+                    <>{boardSel.chip}</>
                   ) : (
                     <>
                       {t('当前')} <b>{t(curFmt.label)}</b> {t('工作区')}
@@ -1292,7 +1292,7 @@ function roundedPath(pts: XY[], r = 8): string {
   const last = pts[pts.length - 1]!;
   return d + ` L ${last.x} ${last.y}`;
 }
-export interface BoardSel { count: number; text: string }
+export interface BoardSel { count: number; chip: string; context: string }
 const bandRect = (b: { x0: number; y0: number; x1: number; y1: number }): { x: number; y: number; w: number; h: number } => ({
   x: Math.min(b.x0, b.x1),
   y: Math.min(b.y0, b.y1),
@@ -1358,26 +1358,33 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
   cb.current = onBoardSel;
 
   // 选区变化 → 上抛给 App(Agent 感知:选中/框选的节点与连线)
+  // 画板内容 → 上抛给 App。核心:不只是选中,还把【完整拓扑(每个节点 + 连接关系)】给 Agent,
+  // 让 Agent 理解整张流程图的结构,从而能据此驱动修改。
   useEffect(() => {
-    const sn = nodes.filter((n) => selIds.has(n.id));
-    if (sn.length === 0 && !selEdge) {
+    if (nodes.length === 0 && edges.length === 0) {
       cb.current?.(null);
       return;
     }
     const nm = (n: BNode): string => n.label || n.kind || '形状';
-    const label = (id: string): string => {
+    const lab = (id: string): string => {
       const n = nodes.find((x) => x.id === id);
       return n ? nm(n) : id;
     };
-    const eds = edges.filter((e) => selIds.has(e.from) && selIds.has(e.to));
-    const parts: string[] = [];
-    if (sn.length) parts.push(`${sn.length} 个节点: ${sn.map((n) => `「${nm(n)}」`).join('、')}`);
-    if (eds.length) parts.push(`${eds.length} 条连线: ${eds.map((e) => `${label(e.from)}→${label(e.to)}`).join('、')}`);
-    if (selEdge && !eds.length) {
+    const sn = nodes.filter((n) => selIds.has(n.id));
+    const ctx: string[] = [`[流程图] ${nodes.length} 个节点、${edges.length} 条连线。`];
+    if (nodes.length) ctx.push('节点: ' + nodes.map((n) => nm(n)).join('、'));
+    if (edges.length) ctx.push('连接关系: ' + edges.map((e) => `${lab(e.from)} → ${lab(e.to)}`).join(';'));
+    if (sn.length) ctx.push('当前选中: ' + sn.map((n) => nm(n)).join('、'));
+    else if (selEdge) {
       const e = edges.find((x) => x.id === selEdge);
-      if (e) parts.push(`连线 ${label(e.from)}→${label(e.to)}`);
+      if (e) ctx.push(`当前选中连线: ${lab(e.from)} → ${lab(e.to)}`);
     }
-    cb.current?.({ count: sn.length, text: '画板选中 ' + parts.join(';') });
+    const chip = sn.length
+      ? `画板选中 ${sn.length} 个节点: ${sn.map((n) => nm(n)).join('、')}`
+      : selEdge
+        ? '选中 1 条连线'
+        : `流程图 ${nodes.length} 节点 · ${edges.length} 连线`;
+    cb.current?.({ count: sn.length, chip, context: ctx.join('\n') });
   }, [selIds, selEdge, nodes, edges]);
 
   // 屏幕坐标 → 画布坐标(扣除平移/缩放),所有节点/连线都用画布坐标
@@ -1631,7 +1638,7 @@ function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void
               setEditing(n.id);
             }}
           >
-            <svg viewBox="0 0 40 30" preserveAspectRatio="none" fill="none" stroke="#3a3f4b" strokeWidth={1.1} dangerouslySetInnerHTML={{ __html: n.inner }} />
+            <svg viewBox="3 3 34 24" preserveAspectRatio="none" fill="none" stroke="#3a3f4b" strokeWidth={0.9} dangerouslySetInnerHTML={{ __html: n.inner }} />
             {editing === n.id ? (
               <input
                 className="bnode-edit"
