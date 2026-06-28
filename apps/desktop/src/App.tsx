@@ -413,6 +413,7 @@ export function App() {
   const [apiKey, setApiKey] = useState(() => lsGet('oa.apiKey', ''));
   const [server, setServer] = useState(() => lsGet('oa.server', ''));
   const [uniSel, setUniSel] = useState<UniSel | null>(null);
+  const [boardSel, setBoardSel] = useState<BoardSel | null>(null);
   const [realDiff, setRealDiff] = useState<AgentDiff | null>(null);
   const [realCs, setRealCs] = useState<unknown>(null);
   const [accepted, setAccepted] = useState<Set<string>>(new Set());
@@ -576,7 +577,7 @@ export function App() {
   };
   /** 配了 opal-serve 端点 + API Key → 走真实 runtime(propose→diff);否则用内置演示。 */
   const send = async (): Promise<void> => {
-    const ctx = isExcel && uniSel ? uniSel.text : selectionContext();
+    const ctx = isExcel && uniSel ? uniSel.text : fmt === 'drawio' && boardSel ? boardSel.text : selectionContext();
     const ep = server.trim().replace(/\/$/, '');
     if (ep && apiKey) {
       setBusy(true);
@@ -802,7 +803,7 @@ export function App() {
                   <UniverSheet onSelection={setUniSel} />
                 </Suspense>
               ) : fmt === 'drawio' ? (
-                <DrawioBoard />
+                <DrawioBoard onBoardSel={setBoardSel} />
               ) : (
                 <div className="doc-page">
                   <div className="canvas-ph">
@@ -820,7 +821,7 @@ export function App() {
               <span className="dot" />
               {t('选区')} <span className="ref">{isExcel ? (uniSel?.a1 ?? '—') : '—'}</span>
               <span className="grow" />
-              <span>{isExcel ? (uniSel ? `${uniSel.rows} × ${uniSel.cols} ${t('单元格')}` : '—') : `${t(curFmt.label)} ${t('工作区')}`}</span>
+              <span>{isExcel ? (uniSel ? `${uniSel.rows} × ${uniSel.cols} ${t('单元格')}` : '—') : fmt === 'drawio' && boardSel ? `${boardSel.count} ${t('个对象')}` : `${t(curFmt.label)} ${t('工作区')}`}</span>
             </div>
 
             <div className="rail-body">
@@ -990,6 +991,8 @@ export function App() {
                     <>
                       {t('已选')} <b>{uniSel?.a1 ?? '—'}</b>{uniSel ? ` · ${uniSel.rows}×${uniSel.cols}` : ''}
                     </>
+                  ) : fmt === 'drawio' && boardSel ? (
+                    <>{boardSel.text}</>
                   ) : (
                     <>
                       {t('当前')} <b>{t(curFmt.label)}</b> {t('工作区')}
@@ -1280,6 +1283,16 @@ function roundedPath(pts: XY[], r = 8): string {
   const last = pts[pts.length - 1]!;
   return d + ` L ${last.x} ${last.y}`;
 }
+export interface BoardSel { count: number; text: string }
+const bandRect = (b: { x0: number; y0: number; x1: number; y1: number }): { x: number; y: number; w: number; h: number } => ({
+  x: Math.min(b.x0, b.x1),
+  y: Math.min(b.y0, b.y1),
+  w: Math.abs(b.x1 - b.x0),
+  h: Math.abs(b.y1 - b.y0),
+});
+const intersects = (r: { x: number; y: number; w: number; h: number }, n: BNode): boolean =>
+  !(n.x > r.x + r.w || n.x + n.w < r.x || n.y > r.y + r.h || n.y + n.h < r.y);
+
 function resizeNode(r: { box: BNode; k: string; sx: number; sy: number }, x: number, y: number): BNode {
   const b = r.box;
   let nx = b.x, ny = b.y, w = b.w, h = b.h;
@@ -1298,21 +1311,43 @@ const HANDLES: { k: string; fx: number; fy: number }[] = [
 const PORTS: XY[] = [{ x: 0.5, y: 0 }, { x: 1, y: 0.5 }, { x: 0.5, y: 1 }, { x: 0, y: 0.5 }];
 
 /** 高度复刻 drawio 的交互画板:周界正交圆角连线、悬停连接点拖拽连线(绿色目标高亮)、8 缩放手柄、网格吸附、改名、删边删点、双击空白建节点。 */
-function DrawioBoard() {
+function DrawioBoard({ onBoardSel }: { onBoardSel?: (s: BoardSel | null) => void }) {
   const t = useT();
   const [nodes, setNodes] = useState<BNode[]>([]);
   const [edges, setEdges] = useState<BEdge[]>([]);
-  const [sel, setSel] = useState<string | null>(null);
+  const [selIds, setSelIds] = useState<Set<string>>(new Set());
   const [selEdge, setSelEdge] = useState<string | null>(null);
   const [hover, setHover] = useState<string | null>(null);
   const [editing, setEditing] = useState<string | null>(null);
-  const [drag, setDrag] = useState<{ id: string; dx: number; dy: number } | null>(null);
+  const [drag, setDrag] = useState<{ sx: number; sy: number; origins: Record<string, XY> } | null>(null);
   const [resize, setResize] = useState<{ id: string; k: string; box: BNode; sx: number; sy: number } | null>(null);
   const [conn, setConn] = useState<{ from: string; x: number; y: number; tgt: string | null } | null>(null);
+  const [band, setBand] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
   const [zoom, setZoom] = useState(1);
   const [pan, setPan] = useState<XY>({ x: 0, y: 0 });
   const ref = useRef<HTMLDivElement | null>(null);
   const idRef = useRef(0);
+  const cb = useRef(onBoardSel);
+  cb.current = onBoardSel;
+
+  // 选区变化 → 上抛给 App(Agent 感知:选中/框选的节点与连线)
+  useEffect(() => {
+    const sn = nodes.filter((n) => selIds.has(n.id));
+    if (sn.length === 0 && !selEdge) {
+      cb.current?.(null);
+      return;
+    }
+    const label = (id: string): string => nodes.find((n) => n.id === id)?.label ?? id;
+    const eds = edges.filter((e) => selIds.has(e.from) && selIds.has(e.to));
+    const parts: string[] = [];
+    if (sn.length) parts.push(`${sn.length} 个节点: ${sn.map((n) => `「${n.label}」`).join('、')}`);
+    if (eds.length) parts.push(`${eds.length} 条连线: ${eds.map((e) => `${label(e.from)}→${label(e.to)}`).join('、')}`);
+    if (selEdge && !eds.length) {
+      const e = edges.find((x) => x.id === selEdge);
+      if (e) parts.push(`连线 ${label(e.from)}→${label(e.to)}`);
+    }
+    cb.current?.({ count: sn.length, text: '画板选中 ' + parts.join(';') });
+  }, [selIds, selEdge, nodes, edges]);
 
   // 屏幕坐标 → 画布坐标(扣除平移/缩放),所有节点/连线都用画布坐标
   const pt = (e: { clientX: number; clientY: number }): XY => {
@@ -1324,7 +1359,7 @@ function DrawioBoard() {
   const addNode = (x: number, y: number, inner: string, label: string): void => {
     const id = 'n' + ++idRef.current;
     setNodes((ns) => [...ns, { id, x: snap(x - 45), y: snap(y - 27), w: 90, h: 54, inner, label }]);
-    setSel(id);
+    setSelIds(new Set([id]));
     setSelEdge(null);
   };
   const onDrop = (e: DragEvent<HTMLDivElement>): void => {
@@ -1337,19 +1372,29 @@ function DrawioBoard() {
   };
 
   const onMove = (e: { clientX: number; clientY: number }): void => {
-    if (!drag && !conn && !resize) return;
+    if (!drag && !conn && !resize && !band) return;
     const { x, y } = pt(e);
-    if (drag) setNodes((ns) => ns.map((n) => (n.id === drag.id ? { ...n, x: snap(x - drag.dx), y: snap(y - drag.dy) } : n)));
+    if (drag) {
+      const dx = x - drag.sx;
+      const dy = y - drag.sy;
+      setNodes((ns) => ns.map((n) => (drag.origins[n.id] ? { ...n, x: snap(drag.origins[n.id]!.x + dx), y: snap(drag.origins[n.id]!.y + dy) } : n)));
+    }
     if (resize) setNodes((ns) => ns.map((n) => (n.id === resize.id ? resizeNode(resize, x, y) : n)));
     if (conn) {
       const tg = nodeAt(x, y, conn.from);
       setConn((c) => (c ? { ...c, x, y, tgt: tg?.id ?? null } : c));
     }
+    if (band) setBand((b) => (b ? { ...b, x1: x, y1: y } : b));
   };
   const onUp = (): void => {
     if (conn && conn.tgt) {
       const to = conn.tgt;
       setEdges((es) => (es.some((d) => d.from === conn.from && d.to === to) ? es : [...es, { id: 'e' + ++idRef.current, from: conn.from, to }]));
+    }
+    if (band) {
+      const r = bandRect(band);
+      if (r.w > 3 || r.h > 3) setSelIds(new Set(nodes.filter((n) => intersects(r, n)).map((n) => n.id)));
+      setBand(null);
     }
     setDrag(null);
     setConn(null);
@@ -1366,10 +1411,10 @@ function DrawioBoard() {
   useEffect(() => {
     const k = (e: KeyboardEvent): void => {
       if ((e.key === 'Delete' || e.key === 'Backspace') && !editing) {
-        if (sel) {
-          setNodes((ns) => ns.filter((n) => n.id !== sel));
-          setEdges((es) => es.filter((ed) => ed.from !== sel && ed.to !== sel));
-          setSel(null);
+        if (selIds.size) {
+          setNodes((ns) => ns.filter((n) => !selIds.has(n.id)));
+          setEdges((es) => es.filter((ed) => !selIds.has(ed.from) && !selIds.has(ed.to)));
+          setSelIds(new Set());
         } else if (selEdge) {
           setEdges((es) => es.filter((ed) => ed.id !== selEdge));
           setSelEdge(null);
@@ -1378,7 +1423,7 @@ function DrawioBoard() {
     };
     window.addEventListener('keydown', k);
     return () => window.removeEventListener('keydown', k);
-  }, [sel, selEdge, editing]);
+  }, [selIds, selEdge, editing]);
 
   // Ctrl + 滚轮:朝光标位置缩放画布(光标下的点保持不动)
   useEffect(() => {
@@ -1408,9 +1453,15 @@ function DrawioBoard() {
       onDrop={onDrop}
       onPointerMove={onMove}
       onPointerUp={onUp}
-      onPointerDown={() => {
-        setSel(null);
-        setSelEdge(null);
+      onPointerDown={(e) => {
+        const cl = (e.target as HTMLElement).classList;
+        if (e.target === ref.current || cl.contains('board-svg') || cl.contains('board-canvas')) {
+          setSelIds(new Set());
+          setSelEdge(null);
+          capture(e);
+          const { x, y } = pt(e);
+          setBand({ x0: x, y0: y, x1: x, y1: y });
+        }
       }}
       onDoubleClick={(e) => {
         const cl = (e.target as HTMLElement).classList;
@@ -1438,7 +1489,7 @@ function DrawioBoard() {
           const on = selEdge === ed.id;
           return (
             <g key={ed.id}>
-              <path d={d} fill="none" stroke="transparent" strokeWidth={10} style={{ pointerEvents: 'stroke', cursor: 'pointer' }} onPointerDown={(e) => { e.stopPropagation(); setSelEdge(ed.id); setSel(null); }} />
+              <path d={d} fill="none" stroke="transparent" strokeWidth={10} style={{ pointerEvents: 'stroke', cursor: 'pointer' }} onPointerDown={(e) => { e.stopPropagation(); setSelEdge(ed.id); setSelIds(new Set()); }} />
               <path d={d} fill="none" stroke={on ? 'var(--accent)' : '#5f6673'} strokeWidth={on ? 2 : 1.5} markerEnd={`url(#${on ? 'opal-arr-sel' : 'opal-arr'})`} style={{ pointerEvents: 'none' }} />
             </g>
           );
@@ -1454,7 +1505,7 @@ function DrawioBoard() {
       </svg>
 
       {nodes.map((n) => {
-        const isSel = sel === n.id;
+        const isSel = selIds.has(n.id);
         const isHover = hover === n.id;
         const isTgt = conn?.tgt === n.id;
         return (
@@ -1467,10 +1518,15 @@ function DrawioBoard() {
             onPointerDown={(e) => {
               e.stopPropagation();
               capture(e);
-              setSel(n.id);
+              const ids = e.shiftKey ? new Set(selIds).add(n.id) : selIds.has(n.id) ? selIds : new Set([n.id]);
+              setSelIds(ids);
               setSelEdge(null);
               const { x, y } = pt(e);
-              setDrag({ id: n.id, dx: x - n.x, dy: y - n.y });
+              const origins: Record<string, XY> = {};
+              nodes.forEach((nd) => {
+                if (ids.has(nd.id)) origins[nd.id] = { x: nd.x, y: nd.y };
+              });
+              setDrag({ sx: x, sy: y, origins });
             }}
             onDoubleClick={(e) => {
               e.stopPropagation();
@@ -1511,7 +1567,7 @@ function DrawioBoard() {
                   />
                 ))
               : null}
-            {isSel
+            {isSel && selIds.size === 1
               ? HANDLES.map((h) => (
                   <span
                     key={h.k}
@@ -1529,8 +1585,9 @@ function DrawioBoard() {
           </div>
         );
       })}
+      {band ? (() => { const r = bandRect(band); return <div className="band" style={{ left: r.x, top: r.y, width: r.w, height: r.h }} />; })() : null}
       </div>
-      {nodes.length === 0 && <div className="board-hint">{t('从左侧拖拽形状到画板,或双击空白处新建;拖节点边缘圆点连线;Ctrl+滚轮缩放')}</div>}
+      {nodes.length === 0 && <div className="board-hint">{t('从左侧拖拽形状到画板,或双击空白处新建;拖节点边缘圆点连线;框选多选;Ctrl+滚轮缩放')}</div>}
       <div className="board-zoom">{Math.round(zoom * 100)}%</div>
     </div>
   );
