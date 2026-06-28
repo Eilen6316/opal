@@ -90,7 +90,7 @@ npm test -w @opal/writeback-surgical
 - [x] Word redline write-back (w:ins/w:del) + PDF form-fill adapter — propose→commit for excel/word/pdf/drawio
 - [x] Ribbon formatting applies to the live selection (bold/italic/colors/align/number-format)
 - [x] Electron desktop shell + electron-builder packaging config (12-language UI)
-- [x] Cockpit wired to the runtime via a local HTTP bridge (opal-serve) — real propose→diff rendered with per-item accept/reject
+- [x] Closed write-back loop in the cockpit (opal-serve): load a file → propose → review diff (per-item accept/reject) → accept subset → surgical write-back → download the edited file
 
 ## License
 

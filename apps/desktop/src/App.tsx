@@ -405,6 +405,11 @@ export function App() {
   const [apiKey, setApiKey] = useState(() => lsGet('oa.apiKey', ''));
   const [server, setServer] = useState(() => lsGet('oa.server', ''));
   const [realDiff, setRealDiff] = useState<AgentDiff | null>(null);
+  const [realCs, setRealCs] = useState<unknown>(null);
+  const [accepted, setAccepted] = useState<Set<string>>(new Set());
+  const [fileB64, setFileB64] = useState('');
+  const [fileName, setFileName] = useState('');
+  const fileRef = useRef<HTMLInputElement | null>(null);
   const [busy, setBusy] = useState(false);
   const [sel, setSel] = useState<Sel>({ ar: 1, ac: 2, br: 5, bc: 5 });
   const dragRef = useRef(false);
@@ -571,9 +576,11 @@ export function App() {
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify({ format: fmt, intent, context: ctx, provider, model, apiKey }),
         });
-        const data = (await r.json()) as { diff?: AgentDiff; error?: string };
+        const data = (await r.json()) as { changeSet?: unknown; diff?: AgentDiff; error?: string };
         if (!r.ok || !data.diff) throw new Error(data.error ?? 'propose failed');
+        setRealCs(data.changeSet ?? null);
         setRealDiff(data.diff);
+        setAccepted(new Set(data.diff.items.map((it) => it.editId)));
         setSent(true);
       } catch (e) {
         notify('Agent · ' + (e instanceof Error ? e.message : String(e)));
@@ -583,6 +590,72 @@ export function App() {
       return;
     }
     setSent(true);
+  };
+  /** 读入要写回的真实文件(.xlsx/.docx/.pdf/.drawio)为 base64。 */
+  const onFile = (f: File | undefined): void => {
+    if (!f) return;
+    const reader = new FileReader();
+    reader.onload = () => {
+      const res = String(reader.result);
+      setFileB64(res.slice(res.indexOf(',') + 1));
+      setFileName(f.name);
+      notify(t('已载入') + ' · ' + f.name);
+    };
+    reader.readAsDataURL(f);
+  };
+  const downloadB64 = (b64: string, name: string): void => {
+    const bin = atob(b64);
+    const arr = new Uint8Array(bin.length);
+    for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+    const url = URL.createObjectURL(new Blob([arr]));
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = name;
+    a.click();
+    URL.revokeObjectURL(url);
+  };
+  const outName = (n: string): string => {
+    const dot = n.lastIndexOf('.');
+    return dot > 0 ? n.slice(0, dot) + '.opal' + n.slice(dot) : (n || 'out') + '.opal';
+  };
+  const toggleAccept = (id: string, on: boolean): void =>
+    setAccepted((prev) => {
+      const next = new Set(prev);
+      if (on) next.add(id);
+      else next.delete(id);
+      return next;
+    });
+  /** 接受子集 → opal-serve /commit → 外科写回 → 下载结果文件。 */
+  const doCommit = async (ids: string[]): Promise<void> => {
+    const ep = server.trim().replace(/\/$/, '');
+    if (!ep || !realCs) {
+      notify(t('请先用 opal-serve 生成提案'));
+      return;
+    }
+    if (!fileB64) {
+      notify(t('请先上传要写回的文件'));
+      return;
+    }
+    if (!ids.length) {
+      notify(t('没有要接受的改动'));
+      return;
+    }
+    setBusy(true);
+    try {
+      const r = await fetch(ep + '/commit', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ format: fmt, fileBase64: fileB64, changeSet: realCs, acceptedEditIds: ids }),
+      });
+      const data = (await r.json()) as { ok?: boolean; fileBase64?: string; touchedParts?: string[]; fidelity?: { score: number }; error?: string };
+      if (!r.ok || !data.fileBase64) throw new Error(data.error ?? 'commit failed');
+      downloadB64(data.fileBase64, outName(fileName));
+      notify(t('已写回') + ' · ' + (data.touchedParts?.join(', ') ?? '') + ' · ' + Math.round((data.fidelity?.score ?? 1) * 100) + '%');
+    } catch (e) {
+      notify('Commit · ' + (e instanceof Error ? e.message : String(e)));
+    } finally {
+      setBusy(false);
+    }
   };
   const openDrop = (it: string, el: HTMLElement): void => {
     const r = el.getBoundingClientRect();
@@ -819,9 +892,29 @@ export function App() {
                   {realDiff ? (
                     <>
                       <div className="summary">{realDiff.intent}</div>
-                      {realDiff.items.map((it) => (
-                        <Change key={it.editId} tag={it.badge} title={it.ref} before="" after={it.after ?? ''} why={it.label} />
-                      ))}
+                      {realDiff.items.map((it) => {
+                        const on = accepted.has(it.editId);
+                        return (
+                          <div className={'change' + (on ? '' : ' rejected')} key={it.editId}>
+                            <div className="head">
+                              <span className="tag">{it.badge}</span>
+                              <span className="ttl">{it.ref}</span>
+                            </div>
+                            <div className="body2">
+                              {it.after ? (
+                                <div className="ba">
+                                  <span className="after">{it.after}</span>
+                                </div>
+                              ) : null}
+                              <div className="why">{it.label}</div>
+                            </div>
+                            <div className="acts">
+                              <button className={'btn' + (on ? ' ok' : '')} onClick={() => toggleAccept(it.editId, true)}><IconCheck size={14} /> {t('接受')}</button>
+                              <button className={'btn' + (!on ? ' no' : '')} onClick={() => toggleAccept(it.editId, false)}><IconX size={14} /> {t('拒绝')}</button>
+                            </div>
+                          </div>
+                        );
+                      })}
                       {realDiff.items.length === 0 && <div className="te-d">{t('Agent 未提出改动')}</div>}
                     </>
                   ) : (
@@ -839,9 +932,29 @@ export function App() {
                   )}
 
                   <div className="bulk">
-                    <button className="btn ok"><IconCheck size={14} /> {t('全部接受')}</button>
-                    <button className="btn">{t('部分接受')}</button>
-                    <button className="btn no"><IconX size={14} /> {t('拒绝')}</button>
+                    {realDiff ? (
+                      <>
+                        <button
+                          className="btn ok"
+                          disabled={busy}
+                          onClick={() => {
+                            const all = realDiff.items.map((i) => i.editId);
+                            setAccepted(new Set(all));
+                            void doCommit(all);
+                          }}
+                        >
+                          <IconCheck size={14} /> {t('全部接受')}
+                        </button>
+                        <button className="btn" disabled={busy} onClick={() => void doCommit([...accepted])}>{t('部分接受')}</button>
+                        <button className="btn no" onClick={() => setAccepted(new Set())}><IconX size={14} /> {t('拒绝')}</button>
+                      </>
+                    ) : (
+                      <>
+                        <button className="btn ok"><IconCheck size={14} /> {t('全部接受')}</button>
+                        <button className="btn">{t('部分接受')}</button>
+                        <button className="btn no"><IconX size={14} /> {t('拒绝')}</button>
+                      </>
+                    )}
                   </div>
                 </Section>
               )}
@@ -916,7 +1029,14 @@ export function App() {
                   rows={1}
                 />
                 <div className="row">
-                  <button className="iconbtn" title={t('附件')}><IconPaperclip size={17} /></button>
+                  <input
+                    ref={fileRef}
+                    type="file"
+                    accept=".xlsx,.docx,.pdf,.drawio"
+                    style={{ display: 'none' }}
+                    onChange={(e) => onFile(e.target.files?.[0] ?? undefined)}
+                  />
+                  <button className={'iconbtn' + (fileName ? ' on' : '')} title={fileName || t('附件')} onClick={() => fileRef.current?.click()}><IconPaperclip size={17} /></button>
                   <button className="iconbtn" title={t('图片')}><IconImage size={17} /></button>
                   <button className="iconbtn" title={t('历史')}><IconClock size={17} /></button>
                   <span className="grow" />

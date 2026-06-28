@@ -96,6 +96,8 @@ svg { display: block; }
 .st-h3 { color: #2e74b5; font-size: 12px; }
 .st-title { color: #1f3864; font-size: 15px; font-weight: 700; }
 .st-sub { color: #5b9bd5; font-size: 12px; font-style: italic; }
+.change.rejected { opacity: 0.45; }
+.iconbtn.on { color: var(--accent); }
 /* 功能执行反馈 */
 .toast { position: fixed; left: 50%; bottom: 28px; transform: translateX(-50%); z-index: 200; background: var(--primary); color: #fff; font-size: 12.5px; padding: 8px 16px; border-radius: 9px; box-shadow: 0 6px 20px rgba(20, 22, 28, 0.22); pointer-events: none; }
 /* 大按钮:图标在上、标签在下,占整组高 */
