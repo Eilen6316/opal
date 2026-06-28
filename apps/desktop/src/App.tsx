@@ -12,7 +12,7 @@ import { DRAWIO_SHAPES } from './drawio-shapes.js';
 import type { UniSel, SheetHandle } from './UniverSheet.js';
 
 /** Agent 在网格上的一步操作(用于"边画边改"的可视化播放)。 */
-interface GridOp { a1: string; value?: unknown; bg?: string; color?: string; bold?: boolean; note: string }
+interface GridOp { a1: string; value?: unknown; bg?: string; color?: string; bold?: boolean; numFmt?: string; note: string }
 
 /** 真 Univer 表格(体积大 → 懒加载,仅 Excel 用)。 */
 const UniverSheet = lazy(() => import('./UniverSheet.js'));
@@ -649,6 +649,7 @@ export function App() {
       if (op.value !== undefined) api.setCell(op.a1, op.value);
       if (op.bold) api.setBold(op.a1);
       if (op.color) api.setFontColor(op.a1, op.color);
+      if (op.numFmt) api.setNumberFormat(op.a1, op.numFmt);
       await delay(300);
       api.setBackground(op.a1, op.bg ?? null); // 落定:目标底色或清除高亮
       await delay(180);
@@ -663,6 +664,10 @@ export function App() {
       .map((it) => {
         const a1 = it.ref.replace(/^.*!/, ''); // 去掉 Sheet1! 前缀,落到当前表
         const s = it.style;
+        // 数字格式:只改格式、绝不写值(否则会把 "0%" 当文本覆盖数据)
+        if (s?.numberFormat) {
+          return { a1, numFmt: s.numberFormat, note: it.label ?? it.badge };
+        }
         if (s && (s.bgColor || s.color || s.bold)) {
           return {
             a1,

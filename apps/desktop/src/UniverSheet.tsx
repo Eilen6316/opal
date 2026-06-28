@@ -32,6 +32,7 @@ export interface SheetHandle {
   setBackground(a1: string, color: string | null): void;
   setFontColor(a1: string, color: string): void;
   setBold(a1: string): void;
+  setNumberFormat(a1: string, pattern: string): void;
   focus(a1: string): void;
   getValue(a1: string): unknown;
 }
@@ -40,6 +41,7 @@ interface FRangeOps {
   setBackground(c: string | null): void;
   setFontColor(c: string): void;
   setFontWeight(w: string): void;
+  setNumberFormat(p: string): void;
   getValue(): unknown;
 }
 interface FSheetOps {
@@ -90,6 +92,7 @@ interface FRangeLike {
 }
 interface FWorkbookLike {
   getActiveRange(): FRangeLike | null;
+  getActiveSheet?(): { getRange(a1: string): { getValues(): unknown[][] } } | null;
   onSelectionChange(cb: (s: unknown) => void): { dispose?: () => void };
 }
 
@@ -102,8 +105,24 @@ function snap(wb: FWorkbookLike | null | undefined): UniSel | null {
     const styles = range.getCellStyles();
     const rows = values.length;
     const cols = values[0]?.length ?? 0;
-    const grid = values.map((row) => row.map((v) => (v == null ? '' : String(v))).join('\t')).join('\n');
     const start = parseStart(a1);
+    const colLetters = Array.from({ length: cols }, (_, i) => colName(start.c + i));
+
+    // 读第 1 行作为列名(即使选区不含表头),让 Agent 知道每列含义,避免数错列
+    let header: string[] = [];
+    try {
+      const hv = wb?.getActiveSheet?.()?.getRange(`${colLetters[0]}1:${colLetters[cols - 1]}1`)?.getValues?.();
+      header = (hv?.[0] ?? []).map((v) => (v == null ? '' : String(v)));
+    } catch {
+      /* 表头可选 */
+    }
+    const headerLine = header.some((h) => h) ? '列含义: ' + colLetters.map((L, i) => `${L}列=${header[i] || '?'}`).join(' | ') + '\n' : '';
+
+    // 每格带 A1 引用,Agent 改哪格就回哪格的引用
+    const gridLines = values.map(
+      (row, r) => `第${start.r + r + 1}行: ` + row.map((v, c) => `${colLetters[c]}${start.r + r + 1}=${v == null || v === '' ? '(空)' : String(v)}`).join('  '),
+    );
+
     const notes: string[] = [];
     styles.forEach((row, r) =>
       row.forEach((st, c) => {
@@ -111,12 +130,14 @@ function snap(wb: FWorkbookLike | null | undefined): UniSel | null {
         const fmt: string[] = [];
         if (st.bold) fmt.push('加粗');
         if (st.italic) fmt.push('斜体');
-        if (st.underline) fmt.push('下划线');
         if (st.fontSize) fmt.push(`${st.fontSize}px`);
-        if (fmt.length) notes.push(`${colName(start.c + c)}${start.r + r + 1}=${fmt.join('/')}`);
+        if (fmt.length) notes.push(`${colLetters[c]}${start.r + r + 1}=${fmt.join('/')}`);
       }),
     );
-    const text = `选区 ${a1}(${rows}×${cols})\n${grid}` + (notes.length ? `\n格式: ${notes.join('; ')}` : '');
+
+    const text =
+      `选区 ${a1}(${rows} 行 × ${cols} 列)。\n${headerLine}单元格内容(单元格=值):\n${gridLines.join('\n')}` +
+      (notes.length ? `\n已有格式: ${notes.join('; ')}` : '');
     return { a1, rows, cols, text };
   } catch {
     return null;
@@ -147,10 +168,17 @@ const UniverSheet = forwardRef<SheetHandle, { onSelection?: (s: UniSel | null) =
       }
     };
     return {
-      setCell: (a1, v) => safe(() => sheet()?.getRange(a1).setValue(v)),
+      // 以 = 开头的字符串当公式写入(Univer 裸字符串会被存成文本,必须用 { f })
+      setCell: (a1, v) =>
+        safe(() => {
+          const r = sheet()?.getRange(a1);
+          if (typeof v === 'string' && v.trim().startsWith('=')) r?.setValue({ f: v.trim() });
+          else r?.setValue(v);
+        }),
       setBackground: (a1, c) => safe(() => sheet()?.getRange(a1).setBackground(c)),
       setFontColor: (a1, c) => safe(() => sheet()?.getRange(a1).setFontColor(c)),
       setBold: (a1) => safe(() => sheet()?.getRange(a1).setFontWeight('bold')),
+      setNumberFormat: (a1, p) => safe(() => sheet()?.getRange(a1).setNumberFormat(p)),
       focus: (a1) => safe(() => { const s = sheet(); if (s) s.setActiveRange(s.getRange(a1)); }),
       getValue: (a1) => { let v: unknown; safe(() => { v = sheet()?.getRange(a1).getValue(); }); return v; },
     };
