@@ -278,6 +278,10 @@ svg { display: block; }
 .plan { margin: 0 0 14px; padding-left: 14px; border-left: 2px solid var(--line-2); }
 .plan li { margin: 5px 0; color: var(--text-soft); }
 .summary { font-family: var(--mono); font-size: 12px; color: var(--muted); margin: -6px 0 14px; }
+.diff-head { display: flex; align-items: center; gap: 8px; margin: -2px 0 12px; }
+.back-btn { font-size: 12px; color: var(--muted); background: var(--fill); border: 1px solid var(--line); border-radius: 7px; padding: 4px 10px; cursor: pointer; }
+.back-btn:hover { color: var(--text); border-color: var(--accent); }
+.demo-badge { font-size: 11px; font-weight: 600; color: #b26a00; background: #fff5e6; border: 1px solid #ffd591; border-radius: 6px; padding: 3px 8px; }
 
 /* change cards */
 .change { border: 1px solid var(--line); border-radius: var(--r); margin-bottom: 8px; overflow: hidden; }

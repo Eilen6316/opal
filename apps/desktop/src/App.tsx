@@ -336,9 +336,9 @@ const MARGIN = ['41%', '37%', '41%', '28%', '37%'];
 const ANOMALY_ROWIDX = 3;
 
 const EXAMPLES = [
-  { Icon: IconFilter, t: '清洗这张表', d: '统一日期格式、修复被存成文本的数字、去空值' },
-  { Icon: IconFlag, t: '标红异常值', d: '高亮偏离均值过大的数据,生成问题清单' },
-  { Icon: IconSigma, t: '补公式 + 摘要', d: '按 销量×单价 补齐金额与毛利率,逐项确认' },
+  { Icon: IconFilter, t: '清洗这张表', d: '统一日期格式、修复被存成文本的数字、去空值', prompt: '清洗当前选区:统一日期为 YYYY-MM-DD、把被存成文本的数字转回数值、去除多余空格与空值' },
+  { Icon: IconFlag, t: '标红异常值', d: '高亮偏离均值过大的数据,生成问题清单', prompt: '在当前选区中找出偏离均值过大(约 >3σ)的异常值,标红并列出问题清单' },
+  { Icon: IconSigma, t: '补公式 + 摘要', d: '按 销量×单价 补齐金额与毛利率,逐项确认', prompt: '为当前选区补齐缺失的计算列(如 金额=销量×单价、毛利率),逐项确认,并给一句话摘要' },
 ];
 
 const RECENT = [
@@ -576,7 +576,9 @@ export function App() {
     return lines.join('\n');
   };
   /** 配了 otterpatch-serve 端点 + API Key → 走真实 runtime(propose→diff);否则用内置演示。 */
-  const send = async (): Promise<void> => {
+  const send = async (intentOverride?: string): Promise<void> => {
+    const theIntent = intentOverride ?? intent;
+    if (intentOverride && intentOverride !== intent) setIntent(intentOverride);
     const ctx = isExcel && uniSel ? uniSel.text : fmt === 'drawio' && boardSel ? boardSel.context : selectionContext();
     const ep = server.trim().replace(/\/$/, '');
     if (ep && apiKey) {
@@ -585,7 +587,7 @@ export function App() {
         const r = await fetch(ep + '/propose', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ format: fmt, intent, context: ctx, provider, model, apiKey }),
+          body: JSON.stringify({ format: fmt, intent: theIntent, context: ctx, provider, model, apiKey }),
         });
         const data = (await r.json()) as { changeSet?: unknown; diff?: AgentDiff; error?: string };
         if (!r.ok || !data.diff) throw new Error(data.error ?? 'propose failed');
@@ -601,6 +603,13 @@ export function App() {
       return;
     }
     setSent(true);
+  };
+  /** 退出「本次改动」回到建议视图,可发起新指令。 */
+  const resetDiff = (): void => {
+    setSent(false);
+    setRealDiff(null);
+    setRealCs(null);
+    setAccepted(new Set());
   };
   /** 读入要写回的真实文件(.xlsx/.docx/.pdf/.drawio)为 base64。 */
   const onFile = (f: File | undefined): void => {
@@ -737,7 +746,6 @@ export function App() {
               <option key={l.id} value={l.id}>{l.label}</option>
             ))}
           </select>
-          <button className="zoom"><IconSearch size={14} /> 100%</button>
           <button className="icon-ghost" title={t('更多')}><IconDots size={18} /></button>
         </header>
 
@@ -831,7 +839,7 @@ export function App() {
                     {EXAMPLES.map((e) => {
                       const Ico = e.Icon;
                       return (
-                        <button key={e.t} className="example" onClick={() => setSent(true)}>
+                        <button key={e.t} className="example" onClick={() => void send(e.prompt)}>
                           <span className="ico"><Ico size={17} /></span>
                           <span>
                             <div className="t">{t(e.t)}</div>
@@ -865,6 +873,10 @@ export function App() {
                 </>
               ) : (
                 <Section label={t('本次改动') + ' · ' + (realDiff ? realDiff.items.length : 3)}>
+                  <div className="diff-head">
+                    <button className="back-btn" onClick={resetDiff}>← {t('新指令')}</button>
+                    {!realDiff && <span className="demo-badge">{t('演示模式 · 未连接 serve')}</span>}
+                  </div>
                   {realDiff ? (
                     <>
                       <div className="summary">{realDiff.intent}</div>
@@ -925,11 +937,7 @@ export function App() {
                         <button className="btn no" onClick={() => setAccepted(new Set())}><IconX size={14} /> {t('拒绝')}</button>
                       </>
                     ) : (
-                      <>
-                        <button className="btn ok"><IconCheck size={14} /> {t('全部接受')}</button>
-                        <button className="btn">{t('部分接受')}</button>
-                        <button className="btn no"><IconX size={14} /> {t('拒绝')}</button>
-                      </>
+                      <div className="te-d">{t('演示数据 · 连接 otterpatch-serve 并填 API Key 后,这里才是真实可写回的改动')}</div>
                     )}
                   </div>
                 </Section>
@@ -1003,6 +1011,12 @@ export function App() {
                 <textarea
                   value={intent}
                   onChange={(e) => setIntent(e.target.value)}
+                  onKeyDown={(e) => {
+                    if (e.key === 'Enter' && !e.shiftKey && !e.nativeEvent.isComposing) {
+                      e.preventDefault();
+                      if (!busy && !(isExcel && !uniSel)) void send();
+                    }
+                  }}
                   placeholder={t(PLACEHOLDERS[fmt])}
                   rows={1}
                 />
@@ -1021,7 +1035,7 @@ export function App() {
                   <button className={'model' + (cfgOpen ? ' on' : '')} onClick={() => setCfgOpen((v) => !v)}>
                     {curProvider.label} <IconChevron size={13} />
                   </button>
-                  <button className="send" title={t('发送')} onClick={send} disabled={busy}><IconSend size={16} /></button>
+                  <button className="send" title={t('发送')} onClick={() => void send()} disabled={busy || (isExcel && !uniSel)}><IconSend size={16} /></button>
                 </div>
               </div>
             </div>
