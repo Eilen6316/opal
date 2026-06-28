@@ -314,7 +314,10 @@ const CANVAS_HINT: Record<Fmt, string> = {
   ppt: '幻灯片:选中对象 → 指令 → 版式/文本(适配器规划中)',
 };
 
-const COLS = ['A', 'B', 'C', 'D', 'E', 'F'];
+const NCOLS = 14;
+const NROWS = 30;
+const COLS = Array.from({ length: NCOLS }, (_, i) => String.fromCharCode(65 + i)); // A..N
+const ROWS = Array.from({ length: NROWS }, (_, i) => i);
 const HEADERS = ['日期', '产品', '销量', '单价', '金额', '毛利率'];
 const DATA = [
   ['01-03', 'A型', '120', '38'],
@@ -507,7 +510,8 @@ export function App() {
     const row = DATA[di] ?? [];
     if (ci <= 3) return row[ci] ?? '';
     if (ci === 4) return sent ? (AMOUNT[di] ?? '') : '';
-    return sent ? (MARGIN[di] ?? '') : '';
+    if (ci === 5) return sent ? (MARGIN[di] ?? '') : '';
+    return '';
   };
   const cellClass = (ri: number, ci: number): string => {
     const cls: string[] = [];
@@ -526,8 +530,8 @@ export function App() {
   const onEnter = (ri: number, ci: number): void => {
     if (dragRef.current) setSel((s) => ({ ...s, br: ri, bc: ci }));
   };
-  const selColumn = (ci: number): void => setSel({ ar: 0, ac: ci, br: 5, bc: ci });
-  const selRow = (ri: number): void => setSel({ ar: ri, ac: 0, br: ri, bc: 5 });
+  const selColumn = (ci: number): void => setSel({ ar: 0, ac: ci, br: NROWS - 1, bc: ci });
+  const selRow = (ri: number): void => setSel({ ar: ri, ac: 0, br: ri, bc: NCOLS - 1 });
 
   const beginEdit = (ri: number, ci: number): void => {
     setEditing({ ri, ci });
@@ -730,7 +734,8 @@ export function App() {
           <button className="icon-ghost" title={t('更多')}><IconDots size={18} /></button>
         </header>
 
-        <main className="body">
+        <main className={'body' + (fmt === 'drawio' ? ' three' : '')}>
+          {fmt === 'drawio' && <DrawioPalette onPick={(s) => notify(t('插入形状') + ' · ' + s)} />}
           <section className="editor">
             <div className="ribbon">
               <div className="ribbon-tabs">
@@ -781,9 +786,9 @@ export function App() {
                 })}
               </div>
             </div>
-            <div className="canvas">
+            <div className={'canvas' + (isExcel ? ' excel' : fmt === 'drawio' ? ' board' : ' doc')}>
               {isExcel ? (
-                <table className="sheet">
+                <table className="sheet full">
                   <thead>
                     <tr>
                       <th className="colh corner" />
@@ -793,48 +798,36 @@ export function App() {
                     </tr>
                   </thead>
                   <tbody>
-                    <tr>
-                      <td className="rowh" onMouseDown={() => selRow(0)}>1</td>
-                      {HEADERS.map((_, ci) => (
-                        <td
-                          key={ci}
-                          className={('name ' + cellClass(0, ci)).trim()}
-                          style={cellFmtStyle(0, ci)}
-                          onMouseDown={() => onDown(0, ci)}
-                          onMouseEnter={() => onEnter(0, ci)}
-                          onDoubleClick={() => beginEdit(0, ci)}
-                        >
-                          {cellInner(0, ci)}
-                        </td>
-                      ))}
-                    </tr>
-                    {DATA.map((_, di) => {
-                      const ri = di + 1;
-                      return (
-                        <tr key={di}>
-                          <td className="rowh" onMouseDown={() => selRow(ri)}>{ri + 1}</td>
-                          {COLS.map((_, ci) => (
-                            <td
-                              key={ci}
-                              className={cellClass(ri, ci)}
-                              style={cellFmtStyle(ri, ci)}
-                              onMouseDown={() => onDown(ri, ci)}
-                              onMouseEnter={() => onEnter(ri, ci)}
-                              onDoubleClick={() => beginEdit(ri, ci)}
-                            >
-                              {cellInner(ri, ci)}
-                            </td>
-                          ))}
-                        </tr>
-                      );
-                    })}
+                    {ROWS.map((ri) => (
+                      <tr key={ri}>
+                        <td className="rowh" onMouseDown={() => selRow(ri)}>{ri + 1}</td>
+                        {COLS.map((_, ci) => (
+                          <td
+                            key={ci}
+                            className={((ri === 0 ? 'name ' : '') + cellClass(ri, ci)).trim()}
+                            style={cellFmtStyle(ri, ci)}
+                            onMouseDown={() => onDown(ri, ci)}
+                            onMouseEnter={() => onEnter(ri, ci)}
+                            onDoubleClick={() => beginEdit(ri, ci)}
+                          >
+                            {cellInner(ri, ci)}
+                          </td>
+                        ))}
+                      </tr>
+                    ))}
                   </tbody>
                 </table>
+              ) : fmt === 'drawio' ? (
+                <div className="drawio-board">
+                  <div className="board-hint">{t('从左侧拖拽形状到画板,或在右侧让 Agent 画图')}</div>
+                </div>
               ) : (
-                <div className="canvas-ph">
-                  <div className="ph-badge"><IconDoc size={26} /></div>
-                  <div className="ph-t">{t(curFmt.label)} · {t('渲染区')}</div>
-                  <div className="ph-d">{t(CANVAS_HINT[fmt])}</div>
+                <div className="doc-page">
+                  <div className="canvas-ph">
+                    <div className="ph-badge"><IconDoc size={26} /></div>
+                    <div className="ph-t">{t(curFmt.label)} · {t('渲染区')}</div>
+                    <div className="ph-d">{t(CANVAS_HINT[fmt])}</div>
+                  </div>
                 </div>
               )}
             </div>
@@ -1172,5 +1165,55 @@ function ComboCell({ it, onOpen }: { it: string; onOpen: OnOpen }) {
       <span className="rc-val">{t(COMBO[it] ?? '')}</span>
       <span className="caret">▾</span>
     </button>
+  );
+}
+
+/** drawio 左侧形状面板(仿 next-ai-drawio):分类 + 基础流程图形状。 */
+const PALETTE: { cat: string; shapes: { k: string; inner: string }[] }[] = [
+  {
+    cat: '通用',
+    shapes: [
+      { k: '矩形', inner: '<rect x="3" y="5" width="30" height="16" rx="1"/>' },
+      { k: '圆角矩形', inner: '<rect x="3" y="5" width="30" height="16" rx="5"/>' },
+      { k: '椭圆', inner: '<ellipse cx="18" cy="13" rx="15" ry="8"/>' },
+      { k: '菱形', inner: '<polygon points="18,4 33,13 18,22 3,13"/>' },
+      { k: '平行四边形', inner: '<polygon points="9,5 33,5 27,21 3,21"/>' },
+      { k: '六边形', inner: '<polygon points="10,5 26,5 33,13 26,21 10,21 3,13"/>' },
+      { k: '三角形', inner: '<polygon points="18,4 33,21 3,21"/>' },
+      { k: '圆柱', inner: '<path d="M3 9 v8 a15 4 0 0 0 30 0 v-8"/><ellipse cx="18" cy="9" rx="15" ry="4"/>' },
+      { k: '云', inner: '<path d="M11 19 a5 5 0 0 1 0 -10 a6 6 0 0 1 11 -2 a5 5 0 0 1 4 12 z"/>' },
+    ],
+  },
+  {
+    cat: '流程图',
+    shapes: [
+      { k: '开始/结束', inner: '<rect x="3" y="6" width="30" height="14" rx="7"/>' },
+      { k: '处理', inner: '<rect x="3" y="5" width="30" height="16"/><line x1="7" y1="5" x2="7" y2="21"/><line x1="29" y1="5" x2="29" y2="21"/>' },
+      { k: '判定', inner: '<polygon points="18,4 33,13 18,22 3,13"/>' },
+      { k: '数据', inner: '<polygon points="9,5 33,5 27,21 3,21"/>' },
+      { k: '文档', inner: '<path d="M3 5 h30 v12 q-7.5 4 -15 0 q-7.5 -4 -15 0 z"/>' },
+      { k: '连线', inner: '<line x1="4" y1="13" x2="30" y2="13"/><polyline points="26,9 32,13 26,17"/>' },
+    ],
+  },
+];
+
+function DrawioPalette({ onPick }: { onPick: (s: string) => void }) {
+  const t = useT();
+  return (
+    <aside className="palette">
+      <div className="pal-search"><IconSearch size={13} /> <span>{t('搜索形状')}</span></div>
+      {PALETTE.map((cat) => (
+        <div className="pal-cat" key={cat.cat}>
+          <div className="pal-cat-h">{t(cat.cat)}</div>
+          <div className="pal-grid">
+            {cat.shapes.map((s) => (
+              <button key={s.k} className="pal-shape" title={t(s.k)} onClick={() => onPick(t(s.k))}>
+                <svg viewBox="0 0 36 26" fill="none" stroke="currentColor" strokeWidth={1.5} dangerouslySetInnerHTML={{ __html: s.inner }} />
+              </button>
+            ))}
+          </div>
+        </div>
+      ))}
+    </aside>
   );
 }
