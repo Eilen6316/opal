@@ -343,6 +343,9 @@ svg { display: block; }
 .diff-turn { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 8px; }
 .thinking { flex: 1; display: flex; align-items: center; gap: 8px; background: var(--fill); border: 1px solid var(--line); border-radius: 12px 12px 12px 4px; padding: 11px 14px; font-size: 12.5px; color: var(--muted); }
 .reverted-tag { font-size: 11.5px; color: var(--faint); }
+.committed-tag { display: flex; align-items: center; gap: 8px; font-size: 11.5px; color: #0d9488; font-weight: 500; }
+.link-btn { background: transparent; border: 0; color: var(--muted); font-size: 11.5px; cursor: pointer; padding: 0; text-decoration: underline; }
+.link-btn:hover { color: var(--text-soft); }
 
 /* change cards */
 .change { border: 1px solid var(--line); border-radius: var(--r); margin-bottom: 8px; overflow: hidden; }

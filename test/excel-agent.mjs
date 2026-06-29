@@ -33,52 +33,46 @@ const { page, teardown } = await openApp({
   storage: { 'oa.server': SERVE, 'oa.apiKey': KEY, 'oa.provider': PROVIDER, 'oa.model': MODEL },
 });
 
+// Cursor 式对话流:消息累积,不切屏。每次取"最新"一条断言。
 const ask = async (text) => {
+  const before = await page.locator('.answer-bubble, .diff-turn').count();
   await page.locator('textarea').fill(text);
   await page.locator('.send').click();
-  // 等回答气泡或 diff 卡
-  await Promise.race([
-    page.waitForSelector('.answer-bubble', { timeout: 60000 }).catch(() => {}),
-    page.waitForSelector('.change', { timeout: 60000 }).catch(() => {}),
-    page.waitForSelector('.oplist', { timeout: 60000 }).catch(() => {}),
-  ]);
-  await sleep(1200);
+  await page.waitForFunction((n) => document.querySelectorAll('.answer-bubble, .diff-turn').length > n, before, { timeout: 60000 }).catch(() => {});
+  await sleep(1500);
 };
-const reset = async () => {
-  const back = page.locator('.back-btn');
-  if (await back.count()) await back.first().click();
-  await sleep(200);
-};
+const lastAnswer = async () => ((await page.locator('.answer-bubble').last().textContent()) || '').replace(/\s+/g, '');
 
 try {
   await page.waitForSelector('.univer-host canvas', { timeout: 15000 }).catch(() => {});
   await sleep(2500);
   const host = await page.locator('.univer-host').boundingBox();
 
-  // 1) 提问 → 回答(不改表)
-  await page.mouse.click(host.x + 60, host.y + 150); // 选 A2(很小)
-  await sleep(400);
-  await ask('销量这一列的平均值大概是多少?');
-  rep.ok('question -> answer bubble', (await page.locator('.answer-bubble').count()) === 1);
-  rep.ok('question did NOT produce a diff', (await page.locator('.change').count()) === 0);
-  await reset();
-
-  // 2) 全局上下文:小选区也能回答需要看全表的问题
-  await page.mouse.click(host.x + 60, host.y + 150);
-  await sleep(300);
-  await ask('整张表里金额最大的是哪一行?');
-  const ans = ((await page.locator('.answer-bubble').textContent()) || '').replace(/\s+/g, '');
-  rep.ok('global question answered using whole sheet (mentions 57000 or 第4行)', /57000|第4行|1500/.test(ans), ans.slice(0, 60));
-  await reset();
-
-  // 3) 操作 → diff(改表)
+  // 1) 操作 → diff(干净上下文,避免被分析型历史带成回答)
   await page.mouse.move(host.x + 90, host.y + 150);
   await page.mouse.down();
   await page.mouse.move(host.x + 300, host.y + 250, { steps: 6 });
   await page.mouse.up();
   await sleep(300);
-  await ask('把销量列里的异常值标红');
-  rep.ok('operation -> diff/playback', (await page.locator('.change, .oplist').count()) > 0);
+  await ask('把销量列里明显异常的那个值标红加粗');
+  rep.ok('operation -> diff in thread', (await page.locator('.diff-turn .change').count()) >= 1);
+
+  // 2) 接受 → 结果回写(committed 标记 + 进投影历史)
+  const accept = page.locator('.diff-turn .bulk .btn.ok').last();
+  if (await accept.count()) await accept.click();
+  await sleep(500);
+  rep.ok('accepted change shows committed tag', (await page.locator('.committed-tag').count()) >= 1);
+
+  // 3) 提问 → 回答(同一对话流追加,不切屏)
+  await page.mouse.click(host.x + 60, host.y + 150);
+  await sleep(300);
+  await ask('销量这一列的平均值大概是多少?');
+  rep.ok('question -> answer bubble in same thread', (await page.locator('.answer-bubble').count()) >= 1);
+
+  // 4) 全局上下文 + 多轮累积
+  await ask('整张表里金额最大的是哪一行?');
+  rep.ok('global question answered using whole sheet', /57000|第4行|1500/.test(await lastAnswer()), (await lastAnswer()).slice(0, 50));
+  rep.ok('thread accumulates (3 user bubbles)', (await page.locator('.msg-user').count()) === 3);
 } finally {
   await teardown();
 }

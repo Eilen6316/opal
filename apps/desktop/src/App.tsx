@@ -28,7 +28,30 @@ function renderRich(text: string): ReactNode[] {
 type Turn =
   | { role: 'user'; text: string }
   | { role: 'assistant'; kind: 'answer'; text: string }
-  | { role: 'assistant'; kind: 'diff'; diff: AgentDiff; ops: GridOp[]; reverted?: boolean };
+  | { role: 'assistant'; kind: 'diff'; diff: AgentDiff; ops: GridOp[]; reverted?: boolean; committed?: boolean; committedCount?: number };
+
+/**
+ * 把对话流投影成模型历史(Pi 的 projection 模式:thread 是单一数据源)。
+ * - diff 回合只发紧凑摘要 + 处置结果(接受/拒绝/撤销),不发整段 diff;
+ * - 超长时保留最近 KEEP 条,更早要点并入最旧一条保留消息(不破坏 user/assistant 交替,不在 proposal/outcome 间切断)。
+ */
+function buildHistory(thread: Turn[]): Array<{ role: 'user' | 'assistant'; content: string }> {
+  const proj = thread.map((turn): { role: 'user' | 'assistant'; content: string } => {
+    if (turn.role === 'user') return { role: 'user', content: turn.text };
+    if (turn.kind === 'answer') return { role: 'assistant', content: turn.text };
+    const summary = '提出改动: ' + turn.diff.items.map((it) => `${it.ref} ${it.label}`).join('; ');
+    const outcome = turn.reverted ? '(用户已撤销这些改动,文档未保留它们)' : turn.committed ? `(用户已接受并写入${turn.committedCount ?? turn.diff.items.length}处)` : '(已提出,待用户审阅,尚未确定写入)';
+    return { role: 'assistant', content: summary + outcome };
+  });
+  const KEEP = 12;
+  if (proj.length <= KEEP) return proj;
+  const dropped = proj.slice(0, proj.length - KEEP);
+  const kept = proj.slice(-KEEP);
+  const gist = '[此前对话要点] ' + dropped.filter((m) => m.role === 'user').map((m) => m.content).slice(-6).join(' / ');
+  const first = kept[0];
+  if (first) kept[0] = { ...first, content: gist + '\n' + first.content };
+  return kept;
+}
 
 /** 真 Univer 表格(体积大 → 懒加载,仅 Excel 用)。 */
 const UniverSheet = lazy(() => import('./UniverSheet.js'));
@@ -441,7 +464,6 @@ export function App() {
   const lsJson = <T,>(k: string, fb: T): T => { try { const v = JSON.parse(localStorage.getItem(k) ?? 'null'); return v == null ? fb : (v as T); } catch { return fb; } };
   // Cursor 式连续对话流 + 模型历史,持久化到当前工作区(localStorage)
   const [thread, setThread] = useState<Turn[]>(() => lsJson<Turn[]>('oa.thread', []));
-  const [conversation, setConversation] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>(() => lsJson('oa.conversation', []));
   const [recent, setRecent] = useState<{ t: string; time: string }[]>([]);
   const [realDiff, setRealDiff] = useState<AgentDiff | null>(null);
   const [realCs, setRealCs] = useState<unknown>(null);
@@ -482,11 +504,10 @@ export function App() {
   useEffect(() => {
     try {
       localStorage.setItem('oa.thread', JSON.stringify(thread));
-      localStorage.setItem('oa.conversation', JSON.stringify(conversation));
     } catch {
       /* 配额满时忽略 */
     }
-  }, [thread, conversation]);
+  }, [thread]);
   // 新消息时滚到底部(Cursor 式)
   useEffect(() => {
     threadEndRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -633,7 +654,7 @@ export function App() {
         const r = await fetch(ep + '/propose', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ format: fmt, intent: theIntent, context: ctx, provider, model, apiKey, ...(isExcel && uniSel?.sheet ? { sheet: uniSel.sheet } : {}), ...(conversation.length ? { history: conversation } : {}) }),
+          body: JSON.stringify({ format: fmt, intent: theIntent, context: ctx, provider, model, apiKey, ...(isExcel && uniSel?.sheet ? { sheet: uniSel.sheet } : {}), ...(thread.length ? { history: buildHistory(thread) } : {}) }),
         });
         const data = (await r.json()) as { changeSet?: unknown; diff?: AgentDiff; answer?: string; error?: string };
         if (!r.ok) throw new Error(data.error ?? 'propose failed');
@@ -642,7 +663,6 @@ export function App() {
         // 路由:Agent 选择了"回答问题" → 聊天气泡,不改表
         if (data.answer != null) {
           setThread((th) => [...th, { role: 'assistant', kind: 'answer', text: data.answer! }]);
-          setConversation((c) => [...c, { role: 'user' as const, content: theIntent }, { role: 'assistant' as const, content: data.answer! }].slice(-20));
           return;
         }
         if (!data.diff) throw new Error(data.error ?? 'propose failed');
@@ -653,7 +673,6 @@ export function App() {
         setRealCs(data.changeSet ?? null);
         setRealDiff(data.diff);
         setAccepted(new Set(data.diff.items.map((it) => it.editId)));
-        setConversation((c) => [...c, { role: 'user' as const, content: theIntent || '(操作)' }, { role: 'assistant' as const, content: '已提出改动: ' + data.diff!.items.map((it) => `${it.ref} ${it.label}`).join('; ') }].slice(-20));
         if (ops.length) void playOps(ops); // 把 Agent 的改动逐格"画"到网格上
       } catch (e) {
         const m = e instanceof Error ? e.message : String(e);
@@ -684,7 +703,6 @@ export function App() {
   };
   /** 开启新对话:清空多轮历史 + 当前视图。 */
   const newConversation = (): void => {
-    setConversation([]);
     setThread([]);
     resetDiff();
     setSendErr(null);
@@ -703,6 +721,10 @@ export function App() {
     }
     setThread((th) => th.map((tt, i) => (i === idx ? ({ ...tt, reverted: true } as Turn) : tt)));
     notify(t('已撤销该回合改动'));
+  };
+  /** 标记某条改动已被用户接受(写进投影历史,让 Agent 知道改动已采纳)。 */
+  const markCommitted = (idx: number, count: number): void => {
+    setThread((th) => th.map((tt, i) => (i === idx && tt.role === 'assistant' && tt.kind === 'diff' ? ({ ...tt, committed: true, committedCount: count } as Turn) : tt)));
   };
 
   // ── Agent「边画边改」可视化:把操作逐步播放到 Univer 网格,用户看着它一格格地改 ──
@@ -1062,7 +1084,7 @@ export function App() {
                                   {it.after ? <div className="ba"><span className="after">{it.after}</span></div> : null}
                                   <div className="why">{it.label}</div>
                                 </div>
-                                {active && (
+                                {active && !turn.committed && (
                                   <div className="acts">
                                     <button className={'btn' + (on ? ' ok' : '')} onClick={() => toggleAccept(it.editId, true)}><IconCheck size={14} /> {t('接受')}</button>
                                     <button className={'btn' + (!on ? ' no' : '')} onClick={() => toggleAccept(it.editId, false)}><IconX size={14} /> {t('拒绝')}</button>
@@ -1072,13 +1094,15 @@ export function App() {
                             );
                           })}
                           {d.items.length === 0 && <div className="te-d">{t('Agent 未提出改动')}</div>}
-                          {active && d.items.length > 0 ? (
-                            <div className="bulk">
-                              <button className="btn ok" disabled={busy || playing} onClick={() => { const all = d.items.map((x) => x.editId); setAccepted(new Set(all)); void doCommit(all); }}><IconCheck size={14} /> {t('全部接受')}</button>
-                              <button className="btn" disabled={busy || playing} onClick={() => void doCommit([...accepted])}>{t('部分接受')}</button>
-                            </div>
+                          {turn.committed ? (
+                            <div className="committed-tag">✓ {t('已接受')}{turn.committedCount ? ` · ${turn.committedCount} ${t('处')}` : ''} <button className="link-btn" onClick={() => revertTurn(i)}>{t('撤销')}</button></div>
                           ) : turn.reverted ? (
                             <div className="reverted-tag">↩ {t('已撤销')}</div>
+                          ) : active && d.items.length > 0 ? (
+                            <div className="bulk">
+                              <button className="btn ok" disabled={busy || playing} onClick={() => { const all = d.items.map((x) => x.editId); setAccepted(new Set(all)); markCommitted(i, all.length); void doCommit(all); }}><IconCheck size={14} /> {t('全部接受')}</button>
+                              <button className="btn" disabled={busy || playing} onClick={() => { markCommitted(i, accepted.size); void doCommit([...accepted]); }}>{t('部分接受')}</button>
+                            </div>
                           ) : d.items.length > 0 ? (
                             <div className="bulk"><button className="btn" onClick={() => revertTurn(i)}>↩ {t('撤销改动')}</button></div>
                           ) : null}
