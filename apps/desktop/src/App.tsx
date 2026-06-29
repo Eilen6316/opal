@@ -762,8 +762,8 @@ export function App() {
                 } else {
                   applyExcelStructure(cs); // 结构性操作(插删行列/合并/冻结/清空)先落,改变网格布局
                   const ops = diffToOps(diff);
-                  const api = univerRef.current; // 采集改前值,供"撤销/拒绝"还原
-                  if (api) for (const op of ops) { if (op.value !== undefined) op.before = api.getValue(op.a1); }
+                  const api = univerRef.current; // 采集改前值,供 git-diff 展示 + "撤销/拒绝"还原
+                  if (api) for (const op of ops) { op.before = api.getValue(op.a1); }
                   setThread((th) => th.map((tt, i) => (i === th.length - 1 && tt.role === 'assistant' ? { role: 'assistant', kind: 'diff', diff, ops, text: tt.kind === 'answer' ? tt.text : undefined, reasoning: tt.kind === 'answer' ? tt.reasoning : undefined } : tt)));
                   if (ops.length) void playOps(ops); // 边画边改
                 }
@@ -1360,10 +1360,29 @@ export function App() {
                               {total > 0 && active && <span className="rv-count">{Math.min(ridx + (cur ? 1 : 0), total)}<i>/</i>{total}</span>}
                             </div>
                             {total > 0 ? (
-                              <details className="rv-code">
-                                <summary>{turn.board ? t('查看绘制代码') : t('查看改动明细')} · {total} {turn.board ? t('个对象') : t('处')}</summary>
-                                <pre>{d.items.map((it) => `${it.ref}${it.after ? '  ' + it.after : ''}  · ${it.label}`).join('\n')}</pre>
-                              </details>
+                              turn.board ? (
+                                <details className="rv-code">
+                                  <summary>{t('查看绘制代码')} · {total} {t('个对象')}</summary>
+                                  <pre>{d.items.map((it) => `${it.ref}${it.after ? '  ' + it.after : ''}  · ${it.label}`).join('\n')}</pre>
+                                </details>
+                              ) : (
+                                <details className="rv-code">
+                                  <summary>{t('改动明细(git diff)')} · {total} {t('处')}</summary>
+                                  <table className="rv-difftable"><tbody>
+                                    {d.items.map((it, k) => {
+                                      const o = turn.ops.find((x) => x.editId === it.editId);
+                                      const oldV = !it.style && o?.before != null && String(o.before) !== '' ? String(o.before) : '';
+                                      return (
+                                        <tr key={it.editId} className={'dt dt-' + it.badge} onClick={() => { if (active) setReviewIdx(k); }} title={it.label}>
+                                          <td className="dt-ref">{it.ref.replace(/^.*!/, '')}</td>
+                                          <td className="dt-old">{oldV}</td>
+                                          <td className="dt-new">{it.after ?? ''}</td>
+                                        </tr>
+                                      );
+                                    })}
+                                  </tbody></table>
+                                </details>
+                              )
                             ) : null}
                             {total > 0 && active && <div className="rv-prog"><div className="rv-prog-fill" style={{ width: `${(ridx / total) * 100}%` }} /></div>}
 
@@ -1380,7 +1399,20 @@ export function App() {
                                     <span className={'rv-badge ' + cur.badge}>{badgeText(cur.badge)}</span>
                                     <span className="rv-ref">{cur.ref}</span>
                                   </div>
-                                  {cur.after ? <div className="rv-after">{cur.after}</div> : null}
+                                  {(() => {
+                                    if (cur.style) return cur.after ? <div className="rv-fmt">{cur.after}</div> : null; // 格式改动:展示格式说明
+                                    const op = turn.ops.find((o) => o.editId === cur.editId);
+                                    const before = op?.before;
+                                    const hasOld = cur.badge !== 'add' && before != null && String(before) !== '';
+                                    const hasNew = cur.badge !== 'remove' && cur.after != null;
+                                    if (!hasOld && !hasNew) return null;
+                                    return (
+                                      <div className="rv-diff">
+                                        {hasOld ? <div className="rv-old"><span className="rv-sign">−</span>{String(before)}</div> : null}
+                                        {hasNew ? <div className="rv-new"><span className="rv-sign">+</span>{cur.after}</div> : null}
+                                      </div>
+                                    );
+                                  })()}
                                   <div className="rv-why">{cur.label}</div>
                                 </div>
                                 <div className="rv-acts">

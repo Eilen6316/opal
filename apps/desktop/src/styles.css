@@ -472,6 +472,21 @@ svg { display: block; }
 .rv-badge.move { color: #9333ea; background: #f3e8ff; }
 .rv-ref { font-family: var(--mono); font-size: 12.5px; font-weight: 600; color: var(--text); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .rv-after { margin-top: 8px; font-family: var(--mono); font-size: 13px; color: var(--add); word-break: break-word; }
+/* git-diff 风格的改动展示:−旧(红删除线)/ +新(绿) */
+.rv-diff { margin-top: 8px; display: flex; flex-direction: column; gap: 3px; }
+.rv-old { font-family: var(--mono); font-size: 12.5px; color: var(--del); background: var(--del-bg); border-radius: 6px; padding: 2px 8px; text-decoration: line-through; word-break: break-word; }
+.rv-new { font-family: var(--mono); font-size: 12.5px; color: var(--add); background: var(--add-bg); border-radius: 6px; padding: 2px 8px; word-break: break-word; }
+.rv-sign { display: inline-block; width: 12px; opacity: 0.7; font-weight: 700; }
+.rv-fmt { margin-top: 8px; font-size: 12px; color: var(--muted); }
+.rv-difftable { width: 100%; border-collapse: collapse; font-family: var(--mono); font-size: 11px; }
+.rv-difftable tr { cursor: pointer; border-top: 1px solid var(--line); }
+.rv-difftable tr:first-child { border-top: 0; }
+.rv-difftable tr:hover { background: var(--fill); }
+.rv-difftable td { padding: 4px 8px; vertical-align: top; word-break: break-word; }
+.rv-difftable .dt-ref { color: var(--text); font-weight: 600; white-space: nowrap; }
+.rv-difftable .dt-old { color: var(--del); text-decoration: line-through; max-width: 120px; }
+.rv-difftable .dt-new { color: var(--add); max-width: 140px; }
+.rv-code > .rv-difftable { border-top: 1px solid var(--line); }
 .rv-why { margin-top: 6px; font-size: 12px; color: var(--muted); line-height: 1.5; }
 .rv-acts { display: flex; align-items: center; gap: 7px; margin-top: 11px; }
 .rv-acts.done { margin-top: 0; }
