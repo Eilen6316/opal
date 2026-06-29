@@ -65,7 +65,7 @@ function sheetOf(cell: string): string {
 function buildExcelChangeSet(req: ProposeRequest, p: ExcelProposal): ChangeSet {
   const anchors: Record<AnchorId, LogicalAnchor> = {};
   const edits: Edit[] = [];
-  p.edits.forEach((e, i) => {
+  (p.edits ?? []).forEach((e, i) => {
     const aid = ('a' + i) as AnchorId;
     anchors[aid] = {
       id: aid,
@@ -171,7 +171,7 @@ const defined = (o: Record<string, unknown>): Record<string, unknown> =>
 function buildDrawioChangeSet(req: ProposeRequest, p: DrawioProposal): ChangeSet {
   const anchors: Record<AnchorId, LogicalAnchor> = {};
   const edits: Edit[] = [];
-  p.ops.forEach((o, i) => {
+  (p.ops ?? []).forEach((o, i) => {
     const aid = ('a' + i) as AnchorId;
     const page = o.page ?? 0;
     let elementId: string;
@@ -273,7 +273,7 @@ export interface WordProposal {
 function buildWordChangeSet(req: ProposeRequest, p: WordProposal): ChangeSet {
   const anchors: Record<AnchorId, LogicalAnchor> = {};
   const edits: Edit[] = [];
-  p.edits.forEach((e, i) => {
+  (p.edits ?? []).forEach((e, i) => {
     const aid = ('a' + i) as AnchorId;
     anchors[aid] = {
       id: aid,
@@ -324,7 +324,7 @@ export interface PdfProposal {
 function buildPdfChangeSet(req: ProposeRequest, p: PdfProposal): ChangeSet {
   const anchors: Record<AnchorId, LogicalAnchor> = {};
   const edits: Edit[] = [];
-  p.edits.forEach((e, i) => {
+  (p.edits ?? []).forEach((e, i) => {
     const aid = ('a' + i) as AnchorId;
     anchors[aid] = {
       id: aid,
@@ -375,7 +375,7 @@ export interface PptProposal {
 function buildPptChangeSet(req: ProposeRequest, p: PptProposal): ChangeSet {
   const anchors: Record<AnchorId, LogicalAnchor> = {};
   const edits: Edit[] = [];
-  p.edits.forEach((e, i) => {
+  (p.edits ?? []).forEach((e, i) => {
     const aid = ('a' + i) as AnchorId;
     anchors[aid] = {
       id: aid,
