@@ -4,18 +4,11 @@
  * 各通道只负责把这里的"逻辑工具定义/系统提示/取数执行"映射到自家 SDK 的消息/工具格式。
  */
 import type { HostDialect, ProposeRequest } from './model.js';
+import { ROUTING_PREAMBLE, TOO_MANY_STEPS_MSG, ANSWER_USER_DESC, READ_RANGE_DESC, AGGREGATE_DESC } from './prompts/index.js';
 
-/** 多步 loop 的步数上限(含一轮影子校验修复)。 */
+/** 多步 loop 的步数上限(含一轮影子校验修复)。提示词均在 ./prompts(按场景分文件)。 */
 export const STEP_LIMIT = 8;
-export const TOO_MANY_STEPS_MSG = '处理步数过多,请缩小问题范围或把指令说得更具体。';
-
-/** 路由前导:让模型自己判断『回答问题』还是『提出改动』(配合 tool_choice:auto)。 */
-export const ROUTING_PREAMBLE =
-  '判断用户意图后【果断行动】:① 若用户是在提问/查询/咨询(如"这列平均值多少""哪几行可能有问题""这个公式什么意思"),用 answer_user 工具给出简洁文字回答,【绝不要】修改表格;' +
-  '② 凡是明确的执行/生成类指令(如"补全公式""标红异常值""统一格式""mock/造 N 行数据""把这列改成…""画一个 X 图"),【直接调用修改工具执行】——采用合理默认,把关键假设在 plan 里一句话讲清即可,【不要因为可以更完美而反复反问、也不要只输出分析而不动手】;' +
-  '③ 只有当缺失信息会直接导致明显错误、且你无法合理假设时,才用 answer_user 澄清,且最多问一次、并给出你的推荐默认;' +
-  '④ 上下文只给了大表样本时,需要更精确数据就调 read_range/aggregate 工具按需取,不要凭样本臆测;' +
-  '⑤ 不要把思考写成长篇而不产出工具调用——想清楚后必须落到一次 propose_changeset(改表)或 answer_user(回答)。';
+export { ROUTING_PREAMBLE, TOO_MANY_STEPS_MSG };
 
 /** respond 多步 loop 的系统提示(路由前导 + 方言 + 当前表格/选区上下文)。 */
 export function respondSystem(dialect: HostDialect, req: ProposeRequest): string {
@@ -36,17 +29,17 @@ export interface ToolDef {
 
 export const ANSWER_USER_DEF: ToolDef = {
   name: 'answer_user',
-  description: '当用户是在提问/查询/咨询表格(而不是要修改它)时,用本工具直接给出文字回答或澄清反问。',
+  description: ANSWER_USER_DESC,
   parameters: { type: 'object', properties: { text: { type: 'string', description: '给用户的回答(简洁、可含数字结论)' } }, required: ['text'] },
 };
 export const READ_RANGE_DEF: ToolDef = {
   name: 'read_range',
-  description: '读取整张表里任意 A1 区域的精确单元格值(用于超出已给样本的数据)。',
+  description: READ_RANGE_DESC,
   parameters: { type: 'object', properties: { a1: { type: 'string', description: 'A1 区域,如 C2:C500' } }, required: ['a1'] },
 };
 export const AGGREGATE_DEF: ToolDef = {
   name: 'aggregate',
-  description: '对某一整列做聚合统计(自动跳过表头行)。',
+  description: AGGREGATE_DESC,
   parameters: { type: 'object', properties: { column: { type: 'string', description: '列字母,如 C' }, op: { type: 'string', enum: ['sum', 'avg', 'min', 'max', 'count'] } }, required: ['column', 'op'] },
 };
 

@@ -4,6 +4,10 @@
  */
 import type { AnchorId, CellValue, ChangeSet, Edit, EditOp, HostId, LogicalAnchor } from '@otterpatch/core';
 import type { HostDialect, ProposeRequest } from './model.js';
+import {
+  EXCEL_SYSTEM, EXCEL_TOOL_DESC, DRAWIO_SYSTEM, DRAWIO_TOOL_DESC,
+  WORD_SYSTEM, WORD_TOOL_DESC, PDF_SYSTEM, PDF_TOOL_DESC, PPT_SYSTEM, PPT_TOOL_DESC,
+} from './prompts/index.js';
 
 function newChangeSet(
   req: ProposeRequest,
@@ -76,14 +80,9 @@ function buildExcelChangeSet(req: ProposeRequest, p: ExcelProposal): ChangeSet {
 
 export const excelDialect: HostDialect = {
   format: 'excel',
-  systemPrompt:
-    '你是一个 Office 表格编辑 Agent。用户在电子表格里圈选了一块区域,把意图转成一组结构化修改建议,' +
-    '只能通过 propose_changeset 工具提交。规则:① 用 A1 引用(如 Sheet1!B1);② 可用 setValue / setFormula 改内容;' +
-    '③ 改格式用 setStyle:标红/高亮异常值用 style.bgColor(如 #ffd6d6),字体颜色 style.color,加粗 style.bold,对齐 style.align;' +
-    '数字格式(如百分比/货币)用 setNumberFormat 的 pattern(如 0% / "¥"#,##0.00);' +
-    '④ 不直接执行,改动会先交用户逐条审阅。先给一句话 plan,再给 edits。例:标红某异常单元格 → {cell:"Sheet1!C4", op:"setStyle", style:{bgColor:"#ffd6d6", color:"#d11", bold:true}}。',
+  systemPrompt: EXCEL_SYSTEM,
   toolName: 'propose_changeset',
-  toolDescription: '提出对所选单元格的修改建议(不直接执行,交用户审阅)。用 A1 引用;改内容用 setValue/setFormula,改格式(标红/加粗/字色/对齐)用 setStyle,数字格式用 setNumberFormat。',
+  toolDescription: EXCEL_TOOL_DESC,
   parameters: {
     type: 'object',
     properties: {
@@ -204,24 +203,9 @@ function buildDrawioChangeSet(req: ProposeRequest, p: DrawioProposal): ChangeSet
 
 export const drawioDialect: HostDialect = {
   format: 'drawio',
-  systemPrompt:
-    '你是一个 drawio 流程图编辑 Agent。把用户意图转成一组按 mxCell id 的操作,只能通过 propose_changeset 工具提交。' +
-    'op:add(新增节点/边)、update(改 value/style)、delete(删,自动级联删边)、move(改 x/y/width/height)。\n' +
-    '【画图要点 —— 产出一张真正可用、好看的图,而不是几个空盒子】:\n' +
-    '① 每个节点必给:cellId(唯一,如 n1/n2…)、value(显示文字,必填别留空)、vertex:true、x/y/width/height;\n' +
-    '② 坐标系左上为原点(px)。节点【不要重叠】:纵向叠放相邻 y 间隔 ≥ height+10;典型 width 160~400、height 48;"在左边"→x 取 40~120;\n' +
-    '③ 多个并列/分层节点请【循环用 drawio 标准配色,每个不同色】并配对描边色,标题 fontStyle=1 加粗、fontSize=14:' +
-    '蓝 fillColor=#dae8fc;strokeColor=#6c8ebf、绿 #d5e8d4/#82b366、黄 #fff2cc/#d6b656、红 #f8cecc/#b85450、紫 #e1d5e7/#9673a6、橙 #ffe6cc/#d79b00、灰 #f5f5f5/#666666;\n' +
-    '④ 关系用 add+edge:true+source/target(两端 cellId)连起来;旁注/说明用 text 节点(style 以 "text;html=1;align=left;fontColor=…" 开头);\n' +
-    '⑤ style 串示例:"rounded=1;whiteSpace=wrap;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;"。\n' +
-    '示例(两层彩色块 + 旁注 + 连线):ops=[' +
-    '{op:"add",cellId:"n1",value:"应用层 (Application)",vertex:true,x:200,y:40,width:360,height:48,style:"rounded=1;html=1;fillColor=#dae8fc;strokeColor=#6c8ebf;fontSize=14;fontStyle=1;"},' +
-    '{op:"add",cellId:"n2",value:"表示层 (Presentation)",vertex:true,x:200,y:108,width:360,height:48,style:"rounded=1;html=1;fillColor=#d5e8d4;strokeColor=#82b366;fontSize=14;fontStyle=1;"},' +
-    '{op:"add",cellId:"t1",value:"HTTP, DNS",vertex:true,x:580,y:50,width:160,height:28,style:"text;html=1;align=left;fontColor=#6c8ebf;"},' +
-    '{op:"add",cellId:"e1",edge:true,source:"n1",target:"n2"}]。\n' +
-    '不直接执行,改动交用户逐条审阅。先给一句话 plan,再给 ops。',
+  systemPrompt: DRAWIO_SYSTEM,
   toolName: 'propose_changeset',
-  toolDescription: '提出对所选 drawio 节点/连线的修改建议(不直接执行,交用户审阅)。按 mxCell id 操作。',
+  toolDescription: DRAWIO_TOOL_DESC,
   parameters: {
     type: 'object',
     properties: {
@@ -282,12 +266,9 @@ function buildWordChangeSet(req: ProposeRequest, p: WordProposal): ChangeSet {
 
 export const wordDialect: HostDialect = {
   format: 'word',
-  systemPrompt:
-    '你是一个 Word 正文编辑 Agent。用户在文档里圈选了文字,把意图转成一组"原文 → 改后"的替换建议,' +
-    '只能通过 propose_changeset 工具提交。规则:① quote 必须是文档中真实存在、足以唯一定位的原文片段;' +
-    '② replacement 是改后的整段文字;③ 改动会落成 Word 原生修订(可逐条接受/拒绝),不直接覆盖。先给一句话 plan,再给 edits。',
+  systemPrompt: WORD_SYSTEM,
   toolName: 'propose_changeset',
-  toolDescription: '提出对所选 Word 文本的替换建议(落成可审阅修订)。给 quote(原文)与 replacement(改后)。',
+  toolDescription: WORD_TOOL_DESC,
   parameters: {
     type: 'object',
     properties: {
@@ -336,12 +317,9 @@ function buildPdfChangeSet(req: ProposeRequest, p: PdfProposal): ChangeSet {
 
 export const pdfDialect: HostDialect = {
   format: 'pdf',
-  systemPrompt:
-    '你是一个 PDF 表单填写 Agent。用户要填一份带 AcroForm 表单字段的 PDF,把意图转成一组"字段名 → 值"的填写建议,' +
-    '只能通过 propose_changeset 工具提交。规则:① field 必须是表单里真实存在的字段名;② value 是要填入的文本;' +
-    '③ 改动交用户逐条审阅后才落盘,只改字段值、不动页面内容。先给一句话 plan,再给 edits。',
+  systemPrompt: PDF_SYSTEM,
   toolName: 'propose_changeset',
-  toolDescription: '提出对 PDF 表单字段的填写建议(只改字段值,交用户审阅)。给 field(字段名)与 value(值)。',
+  toolDescription: PDF_TOOL_DESC,
   parameters: {
     type: 'object',
     properties: {
@@ -390,12 +368,9 @@ function buildPptChangeSet(req: ProposeRequest, p: PptProposal): ChangeSet {
 
 export const pptDialect: HostDialect = {
   format: 'ppt',
-  systemPrompt:
-    '你是一个 PowerPoint 正文编辑 Agent。用户要改某页幻灯片上的文字,把意图转成一组"幻灯片序号 + 原文 → 改后"的替换建议,' +
-    '只能通过 propose_changeset 工具提交。规则:① slide 是从 0 开始的幻灯片序号;② find 是该页真实存在的文字片段;' +
-    '③ replace 是改后的文字;④ 改动交用户逐条审阅后才落盘,只改命中文本、其余字节不变。先给一句话 plan,再给 edits。',
+  systemPrompt: PPT_SYSTEM,
   toolName: 'propose_changeset',
-  toolDescription: '提出对 PPT 幻灯片文字的替换建议(交用户审阅)。给 slide(序号,从0起)、find(原文)、replace(改后)。',
+  toolDescription: PPT_TOOL_DESC,
   parameters: {
     type: 'object',
     properties: {

@@ -10,6 +10,10 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { ChangeSet } from '@otterpatch/core';
 import type { AgentResponse, HostDialect, ModelClient, ProposeRequest, RespondOptions, StreamEvent } from './model.js';
 import { STEP_LIMIT, TOO_MANY_STEPS_MSG, auxToolDefs, execSheetTool, recentHistory, respondSystem } from './sheet-tools.js';
+import { NUDGE_DIRECT, EMPTY_RESULT_FALLBACK, TRUNCATED_FALLBACK } from './prompts/index.js';
+import { salvageProposalArgs } from './json-salvage.js';
+
+const safeJson = (s?: string): Record<string, unknown> => { try { return s ? (JSON.parse(s) as Record<string, unknown>) : {}; } catch { return {}; } };
 
 export interface AnthropicOptions {
   apiKey?: string; // 省略 → 读 ANTHROPIC_API_KEY(BYOK)
@@ -80,12 +84,16 @@ export class AnthropicModelClient implements ModelClient {
     const tools = this.toolset(req, dialect);
     const messages = this.initMessages(req);
     let repairsLeft = opts?.maxRepairs ?? 1;
+    let nudged = false;
 
     for (let step = 0; step < STEP_LIMIT; step++) {
       const res = await this.client.messages.create({ model: this.model, max_tokens: this.maxTokens, system, messages, tools, tool_choice: { type: 'auto' } });
       const text = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('');
       const toolUses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
-      if (!toolUses.length) return { kind: 'answer', text: text.trim() || '(模型未返回内容)' };
+      if (!toolUses.length) {
+        if (!text.trim() && !nudged) { nudged = true; messages.push({ role: 'assistant', content: '(已完成思考)' }); messages.push({ role: 'user', content: NUDGE_DIRECT }); continue; }
+        return { kind: 'answer', text: text.trim() || EMPTY_RESULT_FALLBACK };
+      }
 
       const propose = toolUses.find((b) => b.name === dialect.toolName);
       if (propose) {
@@ -117,6 +125,7 @@ export class AnthropicModelClient implements ModelClient {
     const tools = this.toolset(req, dialect);
     const messages = this.initMessages(req);
     let repairsLeft = opts?.maxRepairs ?? 1;
+    let nudged = false;
 
     for (let step = 0; step < STEP_LIMIT; step++) {
       const stream = await this.client.messages.create({ model: this.model, max_tokens: this.maxTokens, system, messages, tools, tool_choice: { type: 'auto' }, stream: true });
@@ -142,16 +151,19 @@ export class AnthropicModelClient implements ModelClient {
           }
         }
       }
-      const toolUses = Object.values(acc).map((a) => ({ id: a.id, name: a.name, input: (a.json ? JSON.parse(a.json) : {}) as unknown }));
+      const toolUses = Object.values(acc).map((a) => ({ id: a.id, name: a.name, input: safeJson(a.json), json: a.json }));
 
       if (!toolUses.length) {
-        const result: AgentResponse = { kind: 'answer', text: text.trim() || '(模型未返回内容)' };
+        if (!text.trim() && !nudged) { nudged = true; messages.push({ role: 'assistant', content: '(已完成思考)' }); messages.push({ role: 'user', content: NUDGE_DIRECT }); continue; }
+        const result: AgentResponse = { kind: 'answer', text: text.trim() || EMPTY_RESULT_FALLBACK };
         onEvent({ type: 'done', result });
         return result;
       }
       const propose = toolUses.find((b) => b.name === dialect.toolName);
       if (propose) {
-        const cs = dialect.buildChangeSet(req, propose.input);
+        const parsed = salvageProposalArgs(propose.json || '{}');
+        if (parsed.truncated && !parsed.edits?.length && !parsed.ops?.length) { const result: AgentResponse = { kind: 'answer', text: TRUNCATED_FALLBACK }; onEvent({ type: 'done', result }); return result; }
+        const cs = dialect.buildChangeSet(req, parsed);
         if (opts?.verify && repairsLeft > 0) {
           onEvent({ type: 'tool', name: 'verify' });
           const v = await opts.verify(cs);

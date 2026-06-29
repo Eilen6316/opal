@@ -10,6 +10,8 @@ import OpenAI from 'openai';
 import type { ChangeSet } from '@otterpatch/core';
 import type { AgentResponse, HostDialect, ModelClient, ProposeRequest, RespondOptions, StreamEvent } from './model.js';
 import { STEP_LIMIT, TOO_MANY_STEPS_MSG, auxToolDefs, execSheetTool, recentHistory, respondSystem } from './sheet-tools.js';
+import { NUDGE_DIRECT, EMPTY_RESULT_FALLBACK, TRUNCATED_FALLBACK } from './prompts/index.js';
+import { salvageProposalArgs } from './json-salvage.js';
 
 export interface OpenAICompatOptions {
   apiKey?: string;
@@ -126,17 +128,24 @@ export class OpenAICompatModelClient implements ModelClient {
   async respond(req: ProposeRequest, dialect: HostDialect, opts?: RespondOptions): Promise<AgentResponse> {
     const { messages, tools } = this.buildCtx(req, dialect);
     let repairsLeft = opts?.maxRepairs ?? 1;
+    let nudged = false;
 
     for (let step = 0; step < STEP_LIMIT; step++) {
       const res = await this.client.chat.completions.create({ model: this.model, max_tokens: this.maxTokens, messages, tools, tool_choice: 'auto' });
       const msg = res.choices[0]?.message;
       if (!msg) return { kind: 'answer', text: '(模型无响应)' };
       const calls = (msg.tool_calls ?? []).filter((c) => c.type === 'function');
-      if (!calls.length) return { kind: 'answer', text: (msg.content ?? '').trim() || '(模型未返回内容)' };
+      if (!calls.length) {
+        const txt = (msg.content ?? '').trim();
+        if (!txt && !nudged) { nudged = true; messages.push({ role: 'assistant', content: '(已完成思考)' }); messages.push({ role: 'user', content: NUDGE_DIRECT }); continue; }
+        return { kind: 'answer', text: txt || EMPTY_RESULT_FALLBACK };
+      }
 
       const propose = calls.find((c) => c.function.name === dialect.toolName);
       if (propose) {
-        const cs = dialect.buildChangeSet(req, JSON.parse(propose.function.arguments));
+        const parsed = salvageProposalArgs(propose.function.arguments);
+        if (parsed.truncated && !parsed.edits?.length && !parsed.ops?.length) return { kind: 'answer', text: TRUNCATED_FALLBACK };
+        const cs = dialect.buildChangeSet(req, parsed);
         if (opts?.verify && repairsLeft > 0) {
           const v = await opts.verify(cs);
           if (!v.ok) {
@@ -165,6 +174,7 @@ export class OpenAICompatModelClient implements ModelClient {
   async respondStream(req: ProposeRequest, dialect: HostDialect, onEvent: (e: StreamEvent) => void, opts?: RespondOptions): Promise<AgentResponse> {
     const { messages, tools } = this.buildCtx(req, dialect);
     let repairsLeft = opts?.maxRepairs ?? 1;
+    let nudged = false;
 
     for (let step = 0; step < STEP_LIMIT; step++) {
       const stream = await this.client.chat.completions.create({ model: this.model, max_tokens: this.maxTokens, messages, tools, tool_choice: 'auto', stream: true });
@@ -195,7 +205,13 @@ export class OpenAICompatModelClient implements ModelClient {
 
       const propose = calls.find((c) => c.name === dialect.toolName);
       if (propose) {
-        const cs = dialect.buildChangeSet(req, JSON.parse(propose.args || '{}'));
+        const parsed = salvageProposalArgs(propose.args || '{}');
+        if (parsed.truncated && !parsed.edits?.length && !parsed.ops?.length) {
+          const result: AgentResponse = { kind: 'answer', text: TRUNCATED_FALLBACK };
+          onEvent({ type: 'done', result });
+          return result;
+        }
+        const cs = dialect.buildChangeSet(req, parsed);
         if (opts?.verify && repairsLeft > 0) {
           onEvent({ type: 'tool', name: 'verify' });
           const v = await opts.verify(cs);
@@ -217,7 +233,8 @@ export class OpenAICompatModelClient implements ModelClient {
         return result;
       }
       if (!calls.length) {
-        const result: AgentResponse = { kind: 'answer', text: content.trim() || '(模型未返回内容)' };
+        if (!content.trim() && !nudged) { nudged = true; messages.push({ role: 'assistant', content: '(已完成思考)' }); messages.push({ role: 'user', content: NUDGE_DIRECT }); continue; }
+        const result: AgentResponse = { kind: 'answer', text: content.trim() || EMPTY_RESULT_FALLBACK };
         onEvent({ type: 'done', result });
         return result;
       }
