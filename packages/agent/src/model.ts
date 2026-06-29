@@ -16,6 +16,8 @@ export interface ProposeRequest {
   sessionId?: string;
   /** 整张表全量数据(本地传给 serve,不直接塞进模型 prompt;供 read_range/aggregate 工具按需取数)。 */
   sheet?: { a1: string; values: unknown[][] };
+  /** 多轮对话历史(用户消息 + Agent 回答/改动摘要),让本次请求关联上下文。 */
+  history?: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
 /** 一种 host 格式的"方言":系统提示 + 工具(JSON Schema)+ 原始提案到 ChangeSet 的构造。 */

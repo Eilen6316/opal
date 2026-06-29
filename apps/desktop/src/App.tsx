@@ -419,6 +419,7 @@ export function App() {
   const [playing, setPlaying] = useState(false);
   const [sendErr, setSendErr] = useState<string | null>(null);
   const [answer, setAnswer] = useState<string | null>(null);
+  const [conversation, setConversation] = useState<Array<{ role: 'user' | 'assistant'; content: string }>>([]);
   const [recent, setRecent] = useState<{ t: string; time: string }[]>([]);
   const [realDiff, setRealDiff] = useState<AgentDiff | null>(null);
   const [realCs, setRealCs] = useState<unknown>(null);
@@ -594,7 +595,7 @@ export function App() {
         const r = await fetch(ep + '/propose', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ format: fmt, intent: theIntent, context: ctx, provider, model, apiKey, ...(isExcel && uniSel?.sheet ? { sheet: uniSel.sheet } : {}) }),
+          body: JSON.stringify({ format: fmt, intent: theIntent, context: ctx, provider, model, apiKey, ...(isExcel && uniSel?.sheet ? { sheet: uniSel.sheet } : {}), ...(conversation.length ? { history: conversation } : {}) }),
         });
         const data = (await r.json()) as { changeSet?: unknown; diff?: AgentDiff; answer?: string; error?: string };
         if (!r.ok) throw new Error(data.error ?? 'propose failed');
@@ -605,6 +606,7 @@ export function App() {
           setRealDiff(null);
           setPlayList([]);
           setSent(true);
+          setConversation((c) => [...c, { role: 'user', content: theIntent }, { role: 'assistant', content: data.answer! }].slice(-20));
           return;
         }
         if (!data.diff) throw new Error(data.error ?? 'propose failed');
@@ -612,6 +614,7 @@ export function App() {
         setRealCs(data.changeSet ?? null);
         setRealDiff(data.diff);
         setAccepted(new Set(data.diff.items.map((it) => it.editId)));
+        setConversation((c) => [...c, { role: 'user', content: theIntent || '(操作)' }, { role: 'assistant', content: '已提出改动: ' + data.diff!.items.map((it) => `${it.ref} ${it.label}`).join('; ') }].slice(-20));
         const ops = diffToOps(data.diff);
         if (ops.length) void playOps(ops); // 把 Agent 的改动逐格"画"到网格上
         else setSent(true);
@@ -641,6 +644,12 @@ export function App() {
     setPlayList([]);
     setPlayIdx(-1);
     setAnswer(null);
+  };
+  /** 开启新对话:清空多轮历史 + 当前视图。 */
+  const newConversation = (): void => {
+    setConversation([]);
+    resetDiff();
+    setSendErr(null);
   };
 
   // ── Agent「边画边改」可视化:把操作逐步播放到 Univer 网格,用户看着它一格格地改 ──
@@ -913,6 +922,13 @@ export function App() {
             </div>
 
             <div className="rail-body">
+              {conversation.length > 0 && (
+                <div className="convo-bar">
+                  <span className="dot" /> {t('对话进行中')} · {Math.ceil(conversation.length / 2)} {t('轮')}
+                  <span className="grow" />
+                  <button className="convo-new" onClick={newConversation}>{t('新对话')}</button>
+                </div>
+              )}
               {busy ? (
                 <div className="agent-busy">
                   <span className="spin" />

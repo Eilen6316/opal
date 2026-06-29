@@ -154,6 +154,8 @@ export class OpenAICompatModelClient implements ModelClient {
   async respond(req: ProposeRequest, dialect: HostDialect): Promise<AgentResponse> {
     const messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[] = [
       { role: 'system', content: ROUTING_PREAMBLE + '\n\n' + dialect.systemPrompt + '\n\n当前表格/选区上下文:\n' + req.context },
+      // 多轮:历史对话插在 system 之后、当前指令之前,让 Agent 关联上下文
+      ...(req.history ?? []).slice(-12).map((m) => ({ role: m.role, content: m.content })),
       { role: 'user', content: req.intent },
     ];
     const tools: OpenAI.Chat.Completions.ChatCompletionTool[] = [
