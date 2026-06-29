@@ -19,7 +19,7 @@ interface GridOp { a1: string; value?: unknown; bg?: string; color?: string; bol
 type Turn =
   | { role: 'user'; text: string }
   | { role: 'assistant'; kind: 'answer'; text: string; reasoning?: string; streaming?: boolean }
-  | { role: 'assistant'; kind: 'diff'; diff: AgentDiff; ops: GridOp[]; board?: BoardPatch; reasoning?: string; reverted?: boolean; committed?: boolean; committedCount?: number };
+  | { role: 'assistant'; kind: 'diff'; diff: AgentDiff; ops: GridOp[]; board?: BoardPatch; text?: string; reasoning?: string; reverted?: boolean; committed?: boolean; committedCount?: number };
 
 /** drawio 改动落到画板的句柄:editId→画板对象 id 映射 + 可重放的节点/连线(供逐条接受/拒绝)。 */
 interface BoardPatch { byEdit: Record<string, string>; objs: Array<{ editId: string; node?: BNode; edge?: BEdge }> }
@@ -757,12 +757,12 @@ export function App() {
                     board = { byEdit: b.byEdit, objs: b.objs };
                     void playBoard(b.nodes, b.edges); // 兜底:逐个补图,保留"边画"观感
                   }
-                  setThread((th) => th.map((tt, i) => (i === th.length - 1 && tt.role === 'assistant' ? { role: 'assistant', kind: 'diff', diff, ops: [], board: { byEdit: board.byEdit, objs: board.objs }, reasoning: tt.kind === 'answer' ? tt.reasoning : undefined } : tt)));
+                  setThread((th) => th.map((tt, i) => (i === th.length - 1 && tt.role === 'assistant' ? { role: 'assistant', kind: 'diff', diff, ops: [], board: { byEdit: board.byEdit, objs: board.objs }, text: tt.kind === 'answer' ? tt.text : undefined, reasoning: tt.kind === 'answer' ? tt.reasoning : undefined } : tt)));
                 } else {
                   const ops = diffToOps(diff);
                   const api = univerRef.current; // 采集改前值,供"撤销/拒绝"还原
                   if (api) for (const op of ops) { if (op.value !== undefined) op.before = api.getValue(op.a1); }
-                  setThread((th) => th.map((tt, i) => (i === th.length - 1 && tt.role === 'assistant' ? { role: 'assistant', kind: 'diff', diff, ops, reasoning: tt.kind === 'answer' ? tt.reasoning : undefined } : tt)));
+                  setThread((th) => th.map((tt, i) => (i === th.length - 1 && tt.role === 'assistant' ? { role: 'assistant', kind: 'diff', diff, ops, text: tt.kind === 'answer' ? tt.text : undefined, reasoning: tt.kind === 'answer' ? tt.reasoning : undefined } : tt)));
                   if (ops.length) void playOps(ops); // 边画边改
                 }
               } else {
@@ -1300,6 +1300,7 @@ export function App() {
                         <img className="ai-av" src="/favicon.png" alt="" />
                         <div className="ai-stack">
                           {turn.reasoning ? <ThinkingPanel reasoning={turn.reasoning} /> : null}
+                          {turn.text?.trim() ? <div className="answer-bubble md"><Markdown text={turn.text} /></div> : null}
                           <div className="reviewbox">
                             <div className="rv-top">
                               <span className="rv-title"><IconSelect size={13} /> {turn.board ? t('已绘制图表') : t('审阅改动')}</span>
@@ -1307,9 +1308,9 @@ export function App() {
                               <span className="grow" />
                               {total > 0 && active && <span className="rv-count">{Math.min(ridx + (cur ? 1 : 0), total)}<i>/</i>{total}</span>}
                             </div>
-                            {turn.board && total > 0 ? (
+                            {total > 0 ? (
                               <details className="rv-code">
-                                <summary>{t('查看绘制代码')} · {total} {t('个对象')}</summary>
+                                <summary>{turn.board ? t('查看绘制代码') : t('查看改动明细')} · {total} {turn.board ? t('个对象') : t('处')}</summary>
                                 <pre>{d.items.map((it) => `${it.ref}${it.after ? '  ' + it.after : ''}  · ${it.label}`).join('\n')}</pre>
                               </details>
                             ) : null}
