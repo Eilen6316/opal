@@ -95,33 +95,61 @@ interface FWorkbookLike {
   onSelectionChange(cb: (s: unknown) => void): { dispose?: () => void };
 }
 
+function toNum(v: unknown): number {
+  if (typeof v === 'number') return v;
+  const n = parseFloat(String(v).replace(/[,%¥$\s]/g, ''));
+  return Number.isFinite(n) ? n : NaN;
+}
+/** 一列(跳过表头)的类型与统计,作为"注意力概览"的一部分。 */
+function colStat(colVals: unknown[]): string {
+  const body = colVals.slice(1);
+  const nonEmpty = body.filter((v) => v != null && v !== '');
+  if (!nonEmpty.length) return '空列';
+  const nums = nonEmpty.map(toNum).filter((n) => Number.isFinite(n));
+  if (nums.length >= nonEmpty.length * 0.6) {
+    const min = Math.min(...nums);
+    const max = Math.max(...nums);
+    const avg = Math.round((nums.reduce((a, b) => a + b, 0) / nums.length) * 100) / 100;
+    return `数值·min ${min}·max ${max}·avg ${avg}`;
+  }
+  return `文本·${nonEmpty.length}项`;
+}
+
+// 全局上下文:整张表的廉价概览(列名+类型+统计 + 数据/采样)+ 当前选区焦点。
+// 让 Agent 像人一样"先扫一眼全表",再聚焦选区,而不是盲人摸象。
 function snap(wb: FWorkbookLike | null | undefined): UniSel | null {
   try {
     const range = wb?.getActiveRange();
     if (!range) return null;
     const a1 = range.getA1Notation();
-    const values = range.getValues();
+    const selVals = range.getValues();
     const styles = range.getCellStyles();
-    const rows = values.length;
-    const cols = values[0]?.length ?? 0;
+    const rows = selVals.length;
+    const cols = selVals[0]?.length ?? 0;
     const start = parseStart(a1);
-    const colLetters = Array.from({ length: cols }, (_, i) => colName(start.c + i));
 
-    // 读第 1 行作为列名(即使选区不含表头),让 Agent 知道每列含义,避免数错列
-    let header: string[] = [];
-    try {
-      const ws = (wb as unknown as { getActiveSheet?: () => { getRange?: (a1: string) => { getValues?: () => unknown[][] } } | null } | null)?.getActiveSheet?.();
-      const hv = ws?.getRange?.(`${colLetters[0]}1:${colLetters[cols - 1]}1`)?.getValues?.();
-      header = (hv?.[0] ?? []).map((v) => (v == null ? '' : String(v)));
-    } catch {
-      /* 表头可选 */
+    // 整张表(used range)
+    const ws = (wb as unknown as { getActiveSheet?: () => { getDataRange?: () => { getA1Notation?: () => string; getValues?: () => unknown[][] } } | null } | null)?.getActiveSheet?.();
+    const dr = ws?.getDataRange?.();
+    const sheetA1 = dr?.getA1Notation?.() ?? a1;
+    const sheetVals = (dr?.getValues?.() as unknown[][] | undefined) ?? selVals;
+    const R = sheetVals.length;
+    const C = sheetVals[0]?.length ?? cols;
+    const sStart = parseStart(sheetA1);
+    const sCols = Array.from({ length: C }, (_, i) => colName(sStart.c + i));
+    const header = (sheetVals[0] ?? []).map((v) => (v == null ? '' : String(v)));
+    const colLegend = sCols.map((L, i) => `${L}=${header[i] || '?'}(${colStat(sheetVals.map((row) => row[i]))})`).join(' | ');
+
+    const rowLine = (ri: number): string =>
+      `第${sStart.r + ri + 1}行: ` + (sheetVals[ri] ?? []).map((v, c) => `${sCols[c]}${sStart.r + ri + 1}=${v == null || v === '' ? '(空)' : String(v)}`).join('  ');
+    let dataBlock: string;
+    if (R <= 40) {
+      dataBlock = sheetVals.map((_, r) => rowLine(r)).join('\n'); // 小表:全量
+    } else {
+      const head = [0, 1, 2, 3].filter((r) => r < R).map(rowLine);
+      const tail = [R - 2, R - 1].filter((r) => r >= 4).map(rowLine);
+      dataBlock = head.join('\n') + `\n…(中间省略 ${R - head.length - tail.length} 行,需要细节可按列名/统计判断或针对具体行作答)…\n` + tail.join('\n'); // 大表:采样
     }
-    const headerLine = header.some((h) => h) ? '列含义: ' + colLetters.map((L, i) => `${L}列=${header[i] || '?'}`).join(' | ') + '\n' : '';
-
-    // 每格带 A1 引用,Agent 改哪格就回哪格的引用
-    const gridLines = values.map(
-      (row, r) => `第${start.r + r + 1}行: ` + row.map((v, c) => `${colLetters[c]}${start.r + r + 1}=${v == null || v === '' ? '(空)' : String(v)}`).join('  '),
-    );
 
     const notes: string[] = [];
     styles.forEach((row, r) =>
@@ -131,13 +159,14 @@ function snap(wb: FWorkbookLike | null | undefined): UniSel | null {
         if (st.bold) fmt.push('加粗');
         if (st.italic) fmt.push('斜体');
         if (st.fontSize) fmt.push(`${st.fontSize}px`);
-        if (fmt.length) notes.push(`${colLetters[c]}${start.r + r + 1}=${fmt.join('/')}`);
+        if (fmt.length) notes.push(`${colName(start.c + c)}${start.r + r + 1}=${fmt.join('/')}`);
       }),
     );
 
     const text =
-      `选区 ${a1}(${rows} 行 × ${cols} 列)。\n${headerLine}单元格内容(单元格=值):\n${gridLines.join('\n')}` +
-      (notes.length ? `\n已有格式: ${notes.join('; ')}` : '');
+      `[整张表] 范围 ${sheetA1}(${R} 行 × ${C} 列)\n列概览: ${colLegend}\n数据(单元格=值):\n${dataBlock}\n` +
+      `[当前焦点选区] ${a1}(${rows} 行 × ${cols} 列):用户圈选了这块,优先围绕它操作/回答——但你能看到整张表的全貌。` +
+      (notes.length ? `\n焦点区已有格式: ${notes.join('; ')}` : '');
     return { a1, rows, cols, text };
   } catch {
     return null;
