@@ -40,7 +40,7 @@ export const EXCEL_OPS = [
   'setValue', 'setFormula', 'setStyle', 'setNumberFormat',
   'insertRows', 'deleteRows', 'insertCols', 'deleteCols',
   'merge', 'unmerge', 'freeze', 'clear', 'sort',
-  'condFormat', 'dataValidation',
+  'condFormat', 'dataValidation', 'filter',
 ] as const;
 export type ExcelOp = (typeof EXCEL_OPS)[number];
 export type CondWhen = 'greaterThan' | 'greaterThanOrEqual' | 'lessThan' | 'between' | 'equalTo' | 'textContains' | 'notEmpty' | 'formula';
@@ -104,6 +104,7 @@ function buildExcelChangeSet(req: ProposeRequest, p: ExcelProposal): ChangeSet {
       case 'sort': op = { family: 'structure', kind: 'sortRange', by: e.by ?? 0, asc: e.asc ?? true }; break;
       case 'condFormat': op = { family: 'style', kind: 'conditionalFormat', when: e.when ?? 'notEmpty', ...(e.v1 != null ? { v1: e.v1 } : {}), ...(e.v2 != null ? { v2: e.v2 } : {}), style: e.style ?? {} }; break;
       case 'dataValidation': op = { family: 'style', kind: 'dataValidation', rule: e.rule ?? 'list', ...(e.list ? { list: e.list } : {}), ...(e.min != null ? { min: e.min } : {}), ...(e.max != null ? { max: e.max } : {}), ...(e.v != null ? { v: e.v } : {}) }; break;
+      case 'filter': op = { family: 'structure', kind: 'autoFilter' }; break;
       case 'clear': op = { family: 'value', kind: 'deleteRange' }; break;
       default: op = { family: 'value', kind: 'setValue', value: (e.value ?? null) as CellValue };
     }

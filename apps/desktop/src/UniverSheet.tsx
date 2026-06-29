@@ -49,6 +49,7 @@ export interface SheetHandle {
   sortRange(a1: string, by: number, asc: boolean): void;
   conditionalFormat(a1: string, cond: { when: string; v1?: number | string; v2?: number }, fmt: { bgColor?: string; color?: string; bold?: boolean; italic?: boolean }): void;
   dataValidation(a1: string, rule: { kind: string; list?: string[]; min?: number; max?: number; v?: number }): void;
+  createFilter(a1: string): void;
 }
 /** 条件格式规则构建器(Univer FConditionalFormattingBuilder 的最小子集)。 */
 interface CfBuilder {
@@ -86,6 +87,8 @@ interface FRangeOps {
   setValues(v: unknown[][]): void;
   getRange(): unknown;
   setDataValidation(rule: unknown): void;
+  createFilter(): unknown;
+  getFilter(): { remove(): void } | null;
   merge(): void;
   breakApart(): void;
   clearContent(): void;
@@ -323,6 +326,12 @@ const UniverSheet = forwardRef<SheetHandle, { onSelection?: (s: UniSel | null) =
           default: b = dv.requireValueInList(rule.list ?? []);
         }
         s.getRange(a1).setDataValidation(b.build());
+      }),
+      createFilter: (a1) => safe(() => {
+        const r = sheet()?.getRange(a1);
+        if (!r) return;
+        if (r.getFilter()) r.getFilter()?.remove(); // 已有则先清,避免重复
+        r.createFilter();
       }),
       getSheet: () => { try { return snap(apiRef.current?.getActiveWorkbook?.() as unknown as FWorkbookLike | null); } catch { return null; } },
     };

@@ -898,7 +898,7 @@ export function App() {
     const api = univerRef.current;
     const c = cs as { edits?: Array<{ target: string; op: { kind?: string; count?: number; before?: boolean; rows?: number; cols?: number; by?: number; asc?: boolean; when?: string; v1?: number | string; v2?: number; rule?: string; list?: string[]; min?: number; max?: number; v?: number; style?: { bgColor?: string; color?: string; bold?: boolean; italic?: boolean } } }>; anchors?: Record<string, { portable?: { a1?: string } }> } | null;
     if (!api || !c?.edits) return;
-    const ADV = new Set(['insertRows', 'deleteRows', 'insertCols', 'deleteCols', 'mergeCells', 'unmergeCells', 'freezePanes', 'sortRange', 'deleteRange', 'conditionalFormat', 'dataValidation']);
+    const ADV = new Set(['insertRows', 'deleteRows', 'insertCols', 'deleteCols', 'mergeCells', 'unmergeCells', 'freezePanes', 'sortRange', 'deleteRange', 'conditionalFormat', 'dataValidation', 'autoFilter']);
     for (const e of c.edits) {
       const k = e.op?.kind ?? '';
       if (!ADV.has(k)) continue;
@@ -916,6 +916,7 @@ export function App() {
       else if (k === 'deleteRange') api.clearRange(a1);
       else if (k === 'conditionalFormat') api.conditionalFormat(a1, { when: e.op?.when ?? 'notEmpty', v1: e.op?.v1, v2: e.op?.v2 }, e.op?.style ?? {});
       else if (k === 'dataValidation') api.dataValidation(a1, { kind: e.op?.rule ?? 'list', list: e.op?.list, min: e.op?.min, max: e.op?.max, v: e.op?.v });
+      else if (k === 'autoFilter') api.createFilter(a1);
     }
   };
   /** 把 Agent 返回的 diff 转成可播放的网格操作:setStyle→真实底色/字色/加粗;否则写值。 */
