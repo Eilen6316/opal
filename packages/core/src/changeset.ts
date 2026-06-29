@@ -101,6 +101,16 @@ export interface ValidationReport {
     downgrade?: EditOp;
   }>;
 }
+
+/**
+ * 影子校验结果 —— 把提案应用到影子、重算后回喂模型的"观察":
+ *  ok=true ⇒ 无明显问题、无需修复;ok=false ⇒ report 内含重算值 + 问题清单,供模型据此修正。
+ * 支撑 propose→observe→repair 闭环。
+ */
+export interface VerifyReport {
+  ok: boolean;
+  report: string;
+}
 export interface EffectPreview {
   recalculated?: CellValue[][];
   reflowed?: boolean;

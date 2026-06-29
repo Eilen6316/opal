@@ -6,10 +6,10 @@
  * 写回后端按 format 路由:excel/xlsx → 外科 OOXML(Univer 编译器);drawio → 单 XML 外科。
  */
 import { Agent } from '@otterpatch/agent';
-import type { AgentResponse, ModelClient, ProposeRequest, StreamEvent } from '@otterpatch/agent';
+import type { AgentResponse, ModelClient, ProposeRequest, RespondOptions, StreamEvent } from '@otterpatch/agent';
 import type { ChangeSet, DocHandle, WritebackBackend, WritebackResult } from '@otterpatch/core';
 import { SurgicalOoxmlWriteback } from '@otterpatch/writeback-surgical';
-import { buildXlsxCompiler } from '@otterpatch/adapter-univer';
+import { buildXlsxCompiler, buildGridVerifier } from '@otterpatch/adapter-univer';
 import { DrawioSurgicalWriteback } from '@otterpatch/adapter-drawio';
 import { WordRedlineWriteback } from '@otterpatch/adapter-word';
 import { PdfFormWriteback } from '@otterpatch/adapter-pdf';
@@ -83,12 +83,20 @@ export class OtterPatchRuntime {
     }
   }
 
+  /** 提案产出后的影子校验(仅 Excel 且带整表快照时):重算 + 越界/重复命中检查,支撑 propose→observe→repair。 */
+  private verifyOpts(req: ProposeRequest): RespondOptions | undefined {
+    if ((req.format === 'excel' || req.format === 'xlsx') && req.sheet) {
+      return { verify: buildGridVerifier(req.sheet), maxRepairs: 1 };
+    }
+    return undefined;
+  }
+
   /** 智能路由:模型自行决定『回答问题』还是『提出改动』。 */
   async respond(req: ProposeRequest, model: ModelClient): Promise<AgentResponse> {
     this.emit({ type: 'propose:start', format: req.format, intent: req.intent });
     try {
       const agent = new Agent(model, undefined, this.skills);
-      const r = await agent.respond(req);
+      const r = await agent.respond(req, this.verifyOpts(req));
       if (r.kind === 'changeset') {
         this.emit({ type: 'propose:done', changeSetId: r.changeSet.id, editCount: r.changeSet.edits.length, ...(r.changeSet.meta.planSummary ? { planSummary: r.changeSet.meta.planSummary } : {}) });
       }
@@ -104,7 +112,7 @@ export class OtterPatchRuntime {
     this.emit({ type: 'propose:start', format: req.format, intent: req.intent });
     try {
       const agent = new Agent(model, undefined, this.skills);
-      const r = await agent.respondStream(req, onEvent);
+      const r = await agent.respondStream(req, onEvent, this.verifyOpts(req));
       if (r.kind === 'changeset') {
         this.emit({ type: 'propose:done', changeSetId: r.changeSet.id, editCount: r.changeSet.edits.length, ...(r.changeSet.meta.planSummary ? { planSummary: r.changeSet.meta.planSummary } : {}) });
       }

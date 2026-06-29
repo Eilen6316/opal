@@ -8,7 +8,7 @@ import type { ChangeSet } from '@otterpatch/core';
 import type { SkillLibrary } from '@otterpatch/skills';
 import type { ConventionStack } from './conventions.js';
 import { DIALECTS } from './dialects.js';
-import type { AgentResponse, HostDialect, ModelClient, ProposeRequest, StreamEvent } from './model.js';
+import type { AgentResponse, HostDialect, ModelClient, ProposeRequest, RespondOptions, StreamEvent } from './model.js';
 
 export interface ChangeSetValidation {
   ok: boolean;
@@ -45,17 +45,17 @@ export class Agent {
   }
 
   /** 智能路由:模型自行决定回答问题还是提出改动(回退到 propose)。 */
-  async respond(req: ProposeRequest): Promise<AgentResponse> {
+  async respond(req: ProposeRequest, opts?: RespondOptions): Promise<AgentResponse> {
     const d = this.dialectFor(req);
-    if (this.model.respond) return this.model.respond(req, d);
+    if (this.model.respond) return this.model.respond(req, d, opts);
     return { kind: 'changeset', changeSet: await this.model.proposeChangeSet(req, d) };
   }
 
   /** 流式路由:有 respondStream 则透传;否则回退到一次性结果并补发增量/done。 */
-  async respondStream(req: ProposeRequest, onEvent: (e: StreamEvent) => void): Promise<AgentResponse> {
+  async respondStream(req: ProposeRequest, onEvent: (e: StreamEvent) => void, opts?: RespondOptions): Promise<AgentResponse> {
     const d = this.dialectFor(req);
-    if (this.model.respondStream) return this.model.respondStream(req, d, onEvent);
-    const r = this.model.respond ? await this.model.respond(req, d) : { kind: 'changeset' as const, changeSet: await this.model.proposeChangeSet(req, d) };
+    if (this.model.respondStream) return this.model.respondStream(req, d, onEvent, opts);
+    const r = this.model.respond ? await this.model.respond(req, d, opts) : { kind: 'changeset' as const, changeSet: await this.model.proposeChangeSet(req, d) };
     if (r.kind === 'answer') onEvent({ type: 'answer', delta: r.text });
     onEvent({ type: 'done', result: r });
     return r;

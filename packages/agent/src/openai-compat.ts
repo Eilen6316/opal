@@ -8,7 +8,7 @@
  */
 import OpenAI from 'openai';
 import type { ChangeSet } from '@otterpatch/core';
-import type { AgentResponse, HostDialect, ModelClient, ProposeRequest, StreamEvent } from './model.js';
+import type { AgentResponse, HostDialect, ModelClient, ProposeRequest, RespondOptions, StreamEvent } from './model.js';
 
 /** 路由前导:让模型自己判断『回答问题』还是『提出改动』(配合 tool_choice:auto)。 */
 const ROUTING_PREAMBLE =
@@ -203,11 +203,13 @@ export class OpenAICompatModelClient implements ModelClient {
     return { messages, tools };
   }
 
-  /** 智能路由 + 多步 loop:tool_choice:auto;模型可先调只读工具(read_range/aggregate)按需取数,再回答或改表。 */
-  async respond(req: ProposeRequest, dialect: HostDialect): Promise<AgentResponse> {
+  /** 智能路由 + 多步 loop:tool_choice:auto;模型可先调只读工具(read_range/aggregate)按需取数,再回答或改表。
+   *  改表提案产出后,若提供了 opts.verify 则跑一次影子校验;有问题就把重算结果/问题清单回喂,允许模型修正(propose→observe→repair)。 */
+  async respond(req: ProposeRequest, dialect: HostDialect, opts?: RespondOptions): Promise<AgentResponse> {
     const { messages, tools } = this.buildCtx(req, dialect);
+    let repairsLeft = opts?.maxRepairs ?? 1;
 
-    for (let step = 0; step < 6; step++) {
+    for (let step = 0; step < 8; step++) {
       const res = await this.client.chat.completions.create({ model: this.model, max_tokens: this.maxTokens, messages, tools, tool_choice: 'auto' });
       const msg = res.choices[0]?.message;
       if (!msg) return { kind: 'answer', text: '(模型无响应)' };
@@ -215,7 +217,19 @@ export class OpenAICompatModelClient implements ModelClient {
       if (!calls.length) return { kind: 'answer', text: (msg.content ?? '').trim() || '(模型未返回内容)' };
 
       const propose = calls.find((c) => c.function.name === dialect.toolName);
-      if (propose) return { kind: 'changeset', changeSet: dialect.buildChangeSet(req, JSON.parse(propose.function.arguments)) };
+      if (propose) {
+        const cs = dialect.buildChangeSet(req, JSON.parse(propose.function.arguments));
+        if (opts?.verify && repairsLeft > 0) {
+          const v = await opts.verify(cs);
+          if (!v.ok) {
+            repairsLeft--;
+            messages.push({ role: 'assistant', content: msg.content ?? null, tool_calls: [{ id: propose.id, type: 'function', function: propose.function }] });
+            messages.push({ role: 'tool', tool_call_id: propose.id, content: v.report });
+            continue;
+          }
+        }
+        return { kind: 'changeset', changeSet: cs };
+      }
       const ans = calls.find((c) => c.function.name === 'answer_user');
       if (ans) return { kind: 'answer', text: (JSON.parse(ans.function.arguments) as { text?: string }).text ?? '' };
 
@@ -232,11 +246,12 @@ export class OpenAICompatModelClient implements ModelClient {
     return { kind: 'answer', text: '处理步数过多,请缩小问题范围或把指令说得更具体。' };
   }
 
-  /** 流式版 respond:边生成边回调 reasoning(思考)/answer(正文)增量。多步 loop 同 respond。 */
-  async respondStream(req: ProposeRequest, dialect: HostDialect, onEvent: (e: StreamEvent) => void): Promise<AgentResponse> {
+  /** 流式版 respond:边生成边回调 reasoning(思考)/answer(正文)增量。多步 loop + 影子校验修复同 respond。 */
+  async respondStream(req: ProposeRequest, dialect: HostDialect, onEvent: (e: StreamEvent) => void, opts?: RespondOptions): Promise<AgentResponse> {
     const { messages, tools } = this.buildCtx(req, dialect);
+    let repairsLeft = opts?.maxRepairs ?? 1;
 
-    for (let step = 0; step < 6; step++) {
+    for (let step = 0; step < 8; step++) {
       const stream = await this.client.chat.completions.create({ model: this.model, max_tokens: this.maxTokens, messages, tools, tool_choice: 'auto', stream: true });
       let content = '';
       const toolAcc: Record<number, { id: string; name: string; args: string }> = {};
@@ -261,7 +276,18 @@ export class OpenAICompatModelClient implements ModelClient {
 
       const propose = calls.find((c) => c.name === dialect.toolName);
       if (propose) {
-        const result: AgentResponse = { kind: 'changeset', changeSet: dialect.buildChangeSet(req, JSON.parse(propose.args || '{}')) };
+        const cs = dialect.buildChangeSet(req, JSON.parse(propose.args || '{}'));
+        if (opts?.verify && repairsLeft > 0) {
+          onEvent({ type: 'tool', name: 'verify' });
+          const v = await opts.verify(cs);
+          if (!v.ok) {
+            repairsLeft--;
+            messages.push({ role: 'assistant', content: content || null, tool_calls: [{ id: propose.id, type: 'function' as const, function: { name: propose.name, arguments: propose.args } }] });
+            messages.push({ role: 'tool', tool_call_id: propose.id, content: v.report });
+            continue;
+          }
+        }
+        const result: AgentResponse = { kind: 'changeset', changeSet: cs };
         onEvent({ type: 'done', result });
         return result;
       }

@@ -1,0 +1,87 @@
+/**
+ * Excel 影子校验器 —— 把提案应用到"由整表快照建的影子网格"、递归重算公式,
+ * 产出回喂模型的"观察":重算结果(供核对总额/百分比)+ 越界写入/重复命中等问题清单。
+ * 这让 respond 从一次性变成 propose→observe→repair:模型能看到自己改动的真实计算结果并自我修正。
+ */
+import type { CellValue, ChangeSet, VerifyReport } from '@otterpatch/core';
+import { GridChangeSetEngine, gridShadow } from './grid-engine.js';
+
+const colLetter = (n: number): string => {
+  let s = '';
+  let x = n + 1;
+  while (x > 0) {
+    const r = (x - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    x = Math.floor((x - 1) / 26);
+  }
+  return s;
+};
+const colToNum = (c: string): number => {
+  let n = 0;
+  for (const ch of c.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n;
+};
+function cellRC(a1: string): { col: number; row: number } {
+  const m = /([A-Za-z]+)([0-9]+)/.exec(a1);
+  return { col: m ? colToNum(m[1]!) : 1, row: m ? parseInt(m[2]!, 10) : 1 };
+}
+const bareCell = (a1: string): string =>
+  (a1.replace(/^.*!/, '').replace(/\$/g, '').split(':')[0] ?? 'A1').toUpperCase();
+/** 取 a1("A1" / "A1:F20" / "Sheet1!A1")左上角的 0-based 列/行。 */
+function topLeft(a1: string): { c: number; r: number } {
+  const rc = cellRC(bareCell(a1));
+  return { c: rc.col - 1, r: rc.row - 1 };
+}
+
+export interface SheetSnapshot {
+  a1: string;
+  values: unknown[][];
+}
+
+/** 由整表快照造一个影子校验器(返回签名兼容 @otterpatch/agent 的 ChangeSetVerifier)。 */
+export function buildGridVerifier(sheet: SheetSnapshot): (cs: ChangeSet) => Promise<VerifyReport> {
+  return async (cs: ChangeSet): Promise<VerifyReport> => {
+    const tl = topLeft(sheet.a1);
+    const shadow = gridShadow();
+    const rows = sheet.values.length;
+    let maxCol = 0;
+    for (let r = 0; r < rows; r++) {
+      const row = sheet.values[r] ?? [];
+      if (row.length > maxCol) maxCol = row.length;
+      for (let c = 0; c < row.length; c++) {
+        const v = row[c];
+        if (v != null && v !== '') shadow.set(colLetter(tl.c + c) + (tl.r + r + 1), { value: v as CellValue });
+      }
+    }
+    const dataMaxRow = tl.r + rows; // 1-based 末尾数据行
+    const dataMaxCol = tl.c + maxCol; // 1-based 末尾数据列
+
+    let recalculated: CellValue[][] = [];
+    try {
+      const res = await new GridChangeSetEngine().shadowApply(cs, shadow);
+      recalculated = res.effects.recalculated ?? [];
+    } catch {
+      return { ok: true, report: '' }; // 影子无法应用 → 不阻断提案
+    }
+
+    const issues: string[] = [];
+    const seen = new Set<string>();
+    for (const e of cs.edits) {
+      const a = cs.anchors[e.target];
+      if (!a || a.portable.kind !== 'grid') continue;
+      const ref = bareCell(a.portable.a1);
+      const { col, row } = cellRC(ref);
+      if (row > dataMaxRow + 1) issues.push(`${ref}:写到第 ${row} 行,但数据只到第 ${dataMaxRow} 行(中间留空,疑似 ref 笔误)`);
+      else if (col > dataMaxCol + 1) issues.push(`${ref}:写到第 ${col} 列,但数据只到第 ${dataMaxCol} 列(疑似 ref 笔误)`);
+      if (seen.has(ref)) issues.push(`${ref}:被多条改动重复命中(后者覆盖前者)`);
+      seen.add(ref);
+    }
+
+    const recap = recalculated.slice(0, 12).map(([a, v]) => `${String(a)}=${String(v)}`).join('  ');
+    const parts: string[] = [];
+    if (recap) parts.push('影子重算(供你核对结果是否合理):' + recap);
+    if (issues.length) parts.push('发现以下问题:\n' + issues.map((s) => '- ' + s).join('\n'));
+    const tail = issues.length ? '\n请据此修正后重新调用 propose_changeset。' : '';
+    return { ok: issues.length === 0, report: (parts.join('\n') || '影子校验通过,无明显问题。') + tail };
+  };
+}
