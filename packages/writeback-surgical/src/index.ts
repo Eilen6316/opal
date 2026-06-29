@@ -12,6 +12,7 @@
 import type {
   ChangeSet,
   DocHandle,
+  EditId,
   EditOpKind,
   FidelityReport,
   OoxmlPart,
@@ -22,8 +23,28 @@ import type {
 } from '@otterpatch/core';
 import { comparePartsIntegrity, repackOoxml, type OoxmlParts } from './ooxml.js';
 
-/** 把 ChangeSet 编译成"部件 → 新字节";由格式适配器提供。 */
-export type OoxmlPatchCompiler = (cs: ChangeSet, original: Uint8Array) => Promise<OoxmlParts>;
+/** 逐 edit 写回结果:哪些真落了盘、哪些被丢弃(诚实写回)。 */
+export interface OoxmlPatchReport {
+  applied: EditId[];
+  dropped: Array<{ editId: EditId; reason: string }>;
+}
+/** 编译器的富返回:部件补丁 + 逐 edit 报告。也允许只返回 OoxmlParts(老编译器,视为全部已写)。 */
+export interface OoxmlPatchResult {
+  parts: OoxmlParts;
+  report?: OoxmlPatchReport;
+}
+
+/** 把 ChangeSet 编译成"部件 → 新字节"(可附逐 edit 报告);由格式适配器提供。 */
+export type OoxmlPatchCompiler = (
+  cs: ChangeSet,
+  original: Uint8Array,
+) => Promise<OoxmlParts | OoxmlPatchResult>;
+
+/** 区分富返回(OoxmlPatchResult)与裸 OoxmlParts:前者有非 Uint8Array 的 .parts。 */
+function asPatchResult(r: OoxmlParts | OoxmlPatchResult): OoxmlPatchResult {
+  if ('parts' in r && !(r.parts instanceof Uint8Array)) return r as OoxmlPatchResult;
+  return { parts: r as OoxmlParts };
+}
 
 export class SurgicalOoxmlWriteback implements WritebackBackend {
   readonly id = 'surgical-ooxml' as WritebackId;
@@ -48,20 +69,30 @@ export class SurgicalOoxmlWriteback implements WritebackBackend {
   async commit(cs: ChangeSet, doc: DocHandle): Promise<WritebackResult> {
     const original = doc.bytes;
     if (!original) throw new Error('SurgicalOoxmlWriteback.commit: DocHandle.bytes required');
-    const patches = await this.compile(cs, original);
+    const { parts: patches, report } = asPatchResult(await this.compile(cs, original));
     const bytes = repackOoxml(original, patches);
 
     const integrity = comparePartsIntegrity(original, bytes);
     const expected = new Set(Object.keys(patches));
     const drift = integrity.changed
-      .filter((c) => !(c.startsWith('~') && expected.has(c.slice(1)))) // 预期内的改动不算 drift
+      .filter((c) => !((c.startsWith('~') || c.startsWith('+')) && expected.has(c.slice(1)))) // 预期内的改动/新增不算 drift
       .map((c) => ({ part: c.slice(1), kind: 'content' as const, note: `unexpected: ${c}` }));
 
     const fidelity: FidelityReport = {
       score: integrity.total === 0 ? 1 : integrity.identical / integrity.total,
       drift,
     };
-    return { ok: drift.length === 0, bytes, touchedParts: Object.keys(patches), fidelity };
+    // 诚实写回:被丢弃的 edit ⇒ ok=false,绝不在丢了改动时报成功。
+    const dropped = report?.dropped ?? [];
+    const applied = report?.applied ?? cs.edits.map((e) => e.id);
+    return {
+      ok: drift.length === 0 && dropped.length === 0,
+      bytes,
+      touchedParts: Object.keys(patches),
+      fidelity,
+      appliedEditIds: applied,
+      droppedEdits: dropped,
+    };
   }
 
   /** 回读比对(防毁容);校验不过则事务不进入 committed。 */

@@ -885,10 +885,16 @@ export function App() {
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ format: fmt, fileBase64: fileB64, changeSet: realCs, acceptedEditIds: ids }),
       });
-      const data = (await r.json()) as { ok?: boolean; fileBase64?: string; touchedParts?: string[]; fidelity?: { score: number }; error?: string };
+      const data = (await r.json()) as { ok?: boolean; fileBase64?: string; touchedParts?: string[]; fidelity?: { score: number }; appliedEditIds?: string[]; droppedEdits?: Array<{ editId: string; reason: string }>; error?: string };
       if (!r.ok || !data.fileBase64) throw new Error(data.error ?? 'commit failed');
       downloadB64(data.fileBase64, outName(fileName));
-      notify(t('已写回') + ' · ' + (data.touchedParts?.join(', ') ?? '') + ' · ' + Math.round((data.fidelity?.score ?? 1) * 100) + '%');
+      const droppedN = data.droppedEdits?.length ?? 0;
+      if (droppedN > 0) {
+        // 诚实写回:有 edit 没落盘就不报"成功",明确写了几条、丢了几条、为什么。
+        notify('⚠ ' + t('部分写回') + ' · ' + t('已写') + ' ' + (data.appliedEditIds?.length ?? 0) + ' · ' + t('丢弃') + ' ' + droppedN + ' · ' + (data.droppedEdits?.[0]?.reason ?? ''));
+      } else {
+        notify(t('已写回') + ' · ' + (data.touchedParts?.join(', ') ?? '') + ' · ' + Math.round((data.fidelity?.score ?? 1) * 100) + '%');
+      }
     } catch (e) {
       notify('Commit · ' + (e instanceof Error ? e.message : String(e)));
     } finally {

@@ -6,7 +6,7 @@
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { zipSync } from 'fflate';
-import type { AnchorId, ChangeSet, DocRev, HostId } from '@otterpatch/core';
+import type { AnchorId, ChangeSet, DocRev, EditOp, HostId } from '@otterpatch/core';
 import {
   SurgicalOoxmlWriteback,
   comparePartsIntegrity,
@@ -85,4 +85,74 @@ test('setValue 字符串:走 inlineStr,不触碰 sharedStrings', async () => {
   assert.deepEqual(res.touchedParts, ['xl/worksheets/sheet1.xml']);
   const sheet = dec.decode(readOoxmlParts(res.bytes)['xl/worksheets/sheet1.xml']!);
   assert.match(sheet, /<c r="B1" s="2" t="inlineStr"><is><t>利润<\/t><\/is><\/c>/);
+});
+
+/** 单 edit ChangeSet:B1(或指定 a1)+ 任意 EditOp。 */
+function csOp(op: EditOp, a1 = 'Sheet1!B1'): ChangeSet {
+  const aid = 'a1' as AnchorId;
+  return {
+    id: 'cs',
+    hostId: 'h1',
+    baseRev: 0 as DocRev,
+    anchors: { [aid]: { id: aid, hostId: 'h1' as HostId, kind: 'grid', ref: null, baseRev: 0 as DocRev, portable: { kind: 'grid', sheet: 'Sheet1', a1 } } },
+    origin: { by: 'human' },
+    meta: { intent: 't' },
+    edits: [{ id: 'e1', target: aid, op }],
+  };
+}
+
+test('P1.3 setFormula:写 <f> 真落盘(保留样式 s),不再静默丢弃', async () => {
+  const wb = new SurgicalOoxmlWriteback(buildXlsxCompiler());
+  const res = await wb.commit(csOp({ family: 'value', kind: 'setFormula', formula: '=C2*D2' }), { hostId: 'h1', bytes: makeXlsx(), rev: 0 as DocRev });
+
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.appliedEditIds, ['e1']);
+  assert.deepEqual(res.droppedEdits, []);
+  const sheet = dec.decode(readOoxmlParts(res.bytes)['xl/worksheets/sheet1.xml']!);
+  assert.match(sheet, /<c r="B1" s="2"><f>C2\*D2<\/f><\/c>/);
+});
+
+test('P1.3 setStyle:登记到 styles.xml 并改单元格 s(保留原值),ok=true', async () => {
+  const wb = new SurgicalOoxmlWriteback(buildXlsxCompiler());
+  const res = await wb.commit(csOp({ family: 'style', kind: 'setStyle', style: { bold: true, bgColor: '#ffd6d6' } }), { hostId: 'h1', bytes: makeXlsx(), rev: 0 as DocRev });
+
+  assert.equal(res.ok, true);
+  assert.ok(res.touchedParts.includes('xl/styles.xml'), 'styles.xml 被写入');
+  assert.ok(res.touchedParts.includes('xl/worksheets/sheet1.xml'), 'sheet 被写入');
+  const styles = dec.decode(readOoxmlParts(res.bytes)['xl/styles.xml']!);
+  assert.match(styles, /<b\/>/, '登记了加粗字体');
+  assert.match(styles, /patternType="solid"><fgColor rgb="FFFFD6D6"/, '登记了填充色');
+  const sheet = dec.decode(readOoxmlParts(res.bytes)['xl/worksheets/sheet1.xml']!);
+  assert.match(sheet, /<c r="B1" s="\d+"><v>20<\/v><\/c>/, 'B1 原值保留、仅样式索引改变');
+});
+
+test('P1.3 setNumberFormat:登记 numFmt(custom id≥164)到 styles.xml', async () => {
+  const wb = new SurgicalOoxmlWriteback(buildXlsxCompiler());
+  const res = await wb.commit(csOp({ family: 'style', kind: 'setNumberFormat', pattern: '0%' }), { hostId: 'h1', bytes: makeXlsx(), rev: 0 as DocRev });
+
+  assert.equal(res.ok, true);
+  const styles = dec.decode(readOoxmlParts(res.bytes)['xl/styles.xml']!);
+  assert.match(styles, /<numFmt numFmtId="16[0-9]" formatCode="0%"\/>/);
+});
+
+test('P1.3 写入空/不存在的单元格:插入新 <c>(必要时建 <row>),不再 throw', async () => {
+  const wb = new SurgicalOoxmlWriteback(buildXlsxCompiler());
+  const res = await wb.commit(csOp({ family: 'value', kind: 'setValue', value: 42 }, 'Sheet1!C5'), { hostId: 'h1', bytes: makeXlsx(), rev: 0 as DocRev });
+
+  assert.equal(res.ok, true);
+  assert.deepEqual(res.appliedEditIds, ['e1']);
+  const sheet = dec.decode(readOoxmlParts(res.bytes)['xl/worksheets/sheet1.xml']!);
+  assert.match(sheet, /<row r="5"><c r="C5"><v>42<\/v><\/c><\/row>/);
+  assert.match(sheet, /<c r="A1"><v>10<\/v><\/c>/, '原有单元格不受影响');
+});
+
+test('P0 诚实写回:不支持的 op 进 droppedEdits 且 ok=false(不再静默成功)', async () => {
+  const wb = new SurgicalOoxmlWriteback(buildXlsxCompiler());
+  const res = await wb.commit(csOp({ family: 'text', kind: 'replaceText', text: 'x' }), { hostId: 'h1', bytes: makeXlsx(), rev: 0 as DocRev });
+
+  assert.equal(res.ok, false, '丢了改动就不能报成功');
+  assert.deepEqual(res.appliedEditIds, []);
+  assert.equal(res.droppedEdits?.length, 1);
+  assert.match(res.droppedEdits![0]!.reason, /replaceText/);
+  assert.deepEqual(res.touchedParts, [], '什么都没写');
 });

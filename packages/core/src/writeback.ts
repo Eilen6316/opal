@@ -38,6 +38,10 @@ export interface WritebackResult {
   touchedParts: string[];
   fidelity: FidelityReport;
   fallbackUsed?: WritebackKind;
+  /** 真正落盘的 edit(诚实写回:每条 edit 是否被写入)。省略=后端未上报(视为全部已写)。 */
+  appliedEditIds?: EditId[];
+  /** 被静默丢弃的 edit + 原因(如 op 不被该写回后端支持、目标越界)。非空 ⇒ ok=false。 */
+  droppedEdits?: Array<{ editId: EditId; reason: string }>;
 }
 
 export interface WritebackBackend {

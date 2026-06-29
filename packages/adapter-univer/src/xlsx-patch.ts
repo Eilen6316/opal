@@ -1,16 +1,51 @@
 /**
  * Excel ChangeSet → xlsx OOXML 部件补丁编译器(OoxmlPatchCompiler 实现)。
- * 把 setValue 编译成对 xl/worksheets/sheetN.xml 的最小改动;字符串用 inlineStr(不碰 sharedStrings),
- * 保留原单元格样式 s。配合 @otterpatch/writeback-surgical 做外科写回。
- * MVP:仅 setValue 改"已存在单元格";新增单元格/其它算子留待扩展。
+ * 把 setValue/setFormula/setStyle/setNumberFormat/deleteRange 编译成对
+ * xl/worksheets/sheetN.xml(值/公式/样式索引)与 xl/styles.xml(样式登记)的最小改动。
+ *
+ * 诚实写回:
+ *  - 每条 edit 上报 applied / dropped(原因),逐 edit 隔离——一条失败不拖垮整批;
+ *  - 不支持的 op(结构/对象/raw)被显式丢弃并附原因,绝不静默"成功";
+ *  - 目标单元格不存在则插入新 <c>(必要时建 <row>),不再 throw。
+ *  - 字符串走 inlineStr(不碰 sharedStrings);公式写 <f> 不带缓存值(打开时由 Excel 重算)。
  */
 import { unzipSync } from 'fflate';
-import type { CellValue, ChangeSet, LogicalAnchor } from '@otterpatch/core';
-
-export type OoxmlParts = Record<string, Uint8Array>;
+import type { CellValue, ChangeSet, EditId, LogicalAnchor } from '@otterpatch/core';
+import type { OoxmlParts, OoxmlPatchResult } from '@otterpatch/writeback-surgical';
+import { XlsxStyles, type AbstractCellStyle } from './xlsx-styles.js';
 
 const dec = new TextDecoder();
 const encoder = new TextEncoder();
+
+const colToNum = (c: string): number => {
+  let n = 0;
+  for (const ch of c.toUpperCase()) n = n * 26 + (ch.charCodeAt(0) - 64);
+  return n;
+};
+const numToCol = (n: number): string => {
+  let s = '';
+  while (n > 0) {
+    const r = (n - 1) % 26;
+    s = String.fromCharCode(65 + r) + s;
+    n = Math.floor((n - 1) / 26);
+  }
+  return s;
+};
+function parseRef(ref: string): { col: number; row: number } {
+  const m = /^([A-Za-z]+)([0-9]+)$/.exec(ref);
+  return { col: m ? colToNum(m[1]!) : 1, row: m ? parseInt(m[2]!, 10) : 1 };
+}
+/** A1 或 A1:B3 → 单元格引用列表(范围按行列展开)。 */
+function expandCells(a1: string): string[] {
+  const [from, to] = a1.split(':');
+  if (!to) return [from!.toUpperCase()];
+  const a = parseRef(from!);
+  const b = parseRef(to);
+  const out: string[] = [];
+  for (let r = Math.min(a.row, b.row); r <= Math.max(a.row, b.row); r++)
+    for (let c = Math.min(a.col, b.col); c <= Math.max(a.col, b.col); c++) out.push(numToCol(c) + r);
+  return out;
+}
 
 /** 把 sheet 名解析到 xl/worksheets/sheetN.xml;单 sheet 或解析失败 → 默认 sheet1。 */
 export function resolveSheetPart(parts: OoxmlParts, sheetName?: string): string {
@@ -48,32 +83,95 @@ function escapeXml(s: string): string {
     .replace(/"/g, '&quot;');
 }
 
-/** 在 sheet XML 里把某个【已存在】单元格设为新值(保留样式 s)。 */
-export function setCellValueXml(sheetXml: string, ref: string, value: CellValue): string {
+interface CellHit {
+  index: number;
+  len: number;
+  sIdx?: number;
+  t?: string;
+  inner?: string; // undefined ⇒ 自闭合 <c .../>
+}
+function findCell(sheetXml: string, ref: string): CellHit | null {
   const m = new RegExp(`<c r="${ref}"([^>]*?)(?:/>|>([\\s\\S]*?)</c>)`).exec(sheetXml);
-  if (!m) {
-    throw new Error(`setCellValueXml: cell ${ref} not present (inserting new cells is TODO)`);
-  }
+  if (!m) return null;
   const attrs = m[1] ?? '';
-  const sMatch = /\bs="(\d+)"/.exec(attrs);
-  const sAttr = sMatch ? ` s="${sMatch[1]}"` : '';
-
-  let replacement: string;
-  if (value === null) {
-    replacement = `<c r="${ref}"${sAttr}/>`;
-  } else if (typeof value === 'number') {
-    replacement = `<c r="${ref}"${sAttr}><v>${value}</v></c>`;
-  } else if (typeof value === 'boolean') {
-    replacement = `<c r="${ref}"${sAttr} t="b"><v>${value ? 1 : 0}</v></c>`;
-  } else {
-    const space = /^\s|\s$/.test(value) ? ' xml:space="preserve"' : '';
-    replacement = `<c r="${ref}"${sAttr} t="inlineStr"><is><t${space}>${escapeXml(value)}</t></is></c>`;
-  }
-  return sheetXml.slice(0, m.index) + replacement + sheetXml.slice(m.index + (m[0]?.length ?? 0));
+  const s = /\bs="(\d+)"/.exec(attrs)?.[1];
+  const t = /\bt="([^"]*)"/.exec(attrs)?.[1];
+  return {
+    index: m.index,
+    len: m[0].length,
+    ...(s != null ? { sIdx: parseInt(s, 10) } : {}),
+    ...(t != null ? { t } : {}),
+    ...(m[2] != null ? { inner: m[2] } : {}),
+  };
 }
 
-/** 从 grid 锚点取 {sheet?, cell}。a1 可能是 "Sheet1!B2" / "B2" / "B2:D2"(范围取左上)。 */
-function anchorCell(a: LogicalAnchor): { sheet?: string; cell: string } | null {
+const sAttrOf = (sIdx?: number): string => (sIdx != null ? ` s="${sIdx}"` : '');
+
+/** 值单元格 XML(保留传入样式 s)。 */
+function valueCellXml(ref: string, value: CellValue, sIdx?: number): string {
+  const s = sAttrOf(sIdx);
+  if (value === null) return `<c r="${ref}"${s}/>`;
+  if (typeof value === 'number') return `<c r="${ref}"${s}><v>${value}</v></c>`;
+  if (typeof value === 'boolean') return `<c r="${ref}"${s} t="b"><v>${value ? 1 : 0}</v></c>`;
+  const space = /^\s|\s$/.test(value) ? ' xml:space="preserve"' : '';
+  return `<c r="${ref}"${s} t="inlineStr"><is><t${space}>${escapeXml(value)}</t></is></c>`;
+}
+/** 公式单元格 XML:写 <f> 不带缓存值(Excel/LibreOffice 打开时自动重算)。 */
+function formulaCellXml(ref: string, formula: string, sIdx?: number): string {
+  return `<c r="${ref}"${sAttrOf(sIdx)}><f>${escapeXml(formula.replace(/^=/, ''))}</f></c>`;
+}
+/** 只换样式 s、保留原内容的单元格 XML(setStyle/setNumberFormat)。 */
+function restyleCellXml(ref: string, newS: number, existing: CellHit | null): string {
+  const s = ` s="${newS}"`;
+  if (!existing) return `<c r="${ref}"${s}/>`;
+  const t = existing.t != null ? ` t="${existing.t}"` : '';
+  if (existing.inner == null) return `<c r="${ref}"${s}${t}/>`;
+  return `<c r="${ref}"${s}${t}>${existing.inner}</c>`;
+}
+
+/** 替换已存在的 <c>,或按列/行序插入新 <c>(必要时建 <row>)。 */
+function upsertCell(sheetXml: string, ref: string, newCellXml: string, hit: CellHit | null): string {
+  if (hit) return sheetXml.slice(0, hit.index) + newCellXml + sheetXml.slice(hit.index + hit.len);
+  const { col, row } = parseRef(ref);
+
+  const rowOpen = new RegExp(`<row\\b[^>]*\\br="${row}"[^>]*?(/?)>`).exec(sheetXml);
+  if (rowOpen) {
+    if (rowOpen[1] === '/') {
+      const openTag = rowOpen[0].slice(0, -2) + '>';
+      return sheetXml.slice(0, rowOpen.index) + openTag + newCellXml + '</row>' + sheetXml.slice(rowOpen.index + rowOpen[0].length);
+    }
+    const start = rowOpen.index + rowOpen[0].length;
+    const end = sheetXml.indexOf('</row>', start);
+    const inner = sheetXml.slice(start, end);
+    let at = inner.length;
+    for (const m of inner.matchAll(/<c\b[^>]*\br="([A-Za-z]+)\d+"/g)) {
+      if (colToNum(m[1]!) > col) {
+        at = m.index!;
+        break;
+      }
+    }
+    return sheetXml.slice(0, start) + inner.slice(0, at) + newCellXml + inner.slice(at) + sheetXml.slice(end);
+  }
+
+  const sd = /<sheetData\b[^>]*?(\/?)>/.exec(sheetXml);
+  if (!sd) throw new Error('no <sheetData> in worksheet');
+  const rowXml = `<row r="${row}">${newCellXml}</row>`;
+  if (sd[1] === '/') {
+    return sheetXml.slice(0, sd.index) + '<sheetData>' + rowXml + '</sheetData>' + sheetXml.slice(sd.index + sd[0].length);
+  }
+  const sdStart = sd.index + sd[0].length;
+  let insAt = sheetXml.indexOf('</sheetData>', sdStart);
+  for (const m of sheetXml.slice(sdStart).matchAll(/<row\b[^>]*\br="(\d+)"/g)) {
+    if (parseInt(m[1]!, 10) > row) {
+      insAt = sdStart + m.index!;
+      break;
+    }
+  }
+  return sheetXml.slice(0, insAt) + rowXml + sheetXml.slice(insAt);
+}
+
+/** 从 grid 锚点取 {sheet?, a1}(a1 可能是范围)。 */
+function anchorA1(a: LogicalAnchor): { sheet?: string; a1: string } | null {
   const p = a.portable;
   if (p.kind !== 'grid') return null;
   let a1 = p.a1;
@@ -83,34 +181,105 @@ function anchorCell(a: LogicalAnchor): { sheet?: string; cell: string } | null {
     sheet = a1.slice(0, bang).replace(/^'|'$/g, '');
     a1 = a1.slice(bang + 1);
   }
-  return { sheet, cell: a1.split(':')[0] ?? a1 };
+  return sheet != null ? { sheet, a1 } : { a1 };
 }
 
-/** 构造 Excel 的 OoxmlPatchCompiler:ChangeSet 的 setValue → sheet XML 补丁。 */
+function resolveStylesPath(parts: OoxmlParts): string | null {
+  if (parts['xl/styles.xml']) return 'xl/styles.xml';
+  const k = Object.keys(parts).find((p) => /(^|\/)styles\.xml$/.test(p));
+  return k ?? null;
+}
+
+const SUPPORTED = new Set(['setValue', 'setFormula', 'setStyle', 'setNumberFormat', 'deleteRange']);
+
+/** 构造 Excel 的 OoxmlPatchCompiler:ChangeSet → sheet/styles XML 补丁 + 逐 edit 报告。 */
 export function buildXlsxCompiler() {
-  return async function compile(cs: ChangeSet, original: Uint8Array): Promise<OoxmlParts> {
+  return async function compile(cs: ChangeSet, original: Uint8Array): Promise<OoxmlPatchResult> {
     const parts = unzipSync(original);
-    const dirty = new Map<string, string>();
+    const sheetCache = new Map<string, string>();
+    const applied: EditId[] = [];
+    const dropped: Array<{ editId: EditId; reason: string }> = [];
+
+    const stylesPath = resolveStylesPath(parts);
+    const styleBox: { ed: XlsxStyles | null } = { ed: null };
+    const ensureStyles = (): XlsxStyles | null => {
+      if (styleBox.ed) return styleBox.ed;
+      if (!stylesPath || !parts[stylesPath]) return null;
+      styleBox.ed = new XlsxStyles(dec.decode(parts[stylesPath]));
+      return styleBox.ed;
+    };
     const getSheet = (path: string): string => {
-      const cached = dirty.get(path);
+      const cached = sheetCache.get(path);
       if (cached !== undefined) return cached;
       const b = parts[path];
-      if (!b) throw new Error(`compile: missing part ${path}`);
-      return dec.decode(b);
+      if (!b) throw new Error(`missing part ${path}`);
+      const xml = dec.decode(b);
+      sheetCache.set(path, xml);
+      return xml;
     };
 
     for (const edit of cs.edits) {
-      if (edit.op.kind !== 'setValue') continue; // MVP:只处理 setValue
-      const anchor = cs.anchors[edit.target];
-      if (!anchor) throw new Error(`compile: anchor ${edit.target} missing`);
-      const ac = anchorCell(anchor);
-      if (!ac) continue;
-      const path = resolveSheetPart(parts, ac.sheet);
-      dirty.set(path, setCellValueXml(getSheet(path), ac.cell, edit.op.value));
+      const kind = edit.op.kind;
+      try {
+        if (!SUPPORTED.has(kind)) {
+          dropped.push({ editId: edit.id, reason: `op '${kind}' 不被 xlsx 外科写回支持(需结构/对象写回后端)` });
+          continue;
+        }
+        const anchor = cs.anchors[edit.target];
+        if (!anchor) throw new Error(`anchor ${edit.target} missing`);
+        const ac = anchorA1(anchor);
+        if (!ac) {
+          dropped.push({ editId: edit.id, reason: 'anchor 非 grid(无 A1 引用)' });
+          continue;
+        }
+        const path = resolveSheetPart(parts, ac.sheet);
+        const cells = expandCells(ac.a1);
+
+        if (kind === 'setStyle' || kind === 'setNumberFormat') {
+          const ed = ensureStyles();
+          if (!ed) {
+            dropped.push({ editId: edit.id, reason: '缺少 xl/styles.xml,无法登记样式' });
+            continue;
+          }
+          const style: AbstractCellStyle =
+            kind === 'setNumberFormat'
+              ? { numberFormat: (edit.op as { pattern: string }).pattern }
+              : ((edit.op as { style: AbstractCellStyle }).style ?? {});
+          for (const ref of cells) {
+            let xml = getSheet(path);
+            const hit = findCell(xml, ref);
+            const newS = ed.resolveXf(hit?.sIdx, style);
+            xml = upsertCell(xml, ref, restyleCellXml(ref, newS, hit), hit);
+            sheetCache.set(path, xml);
+          }
+        } else {
+          for (const ref of cells) {
+            let xml = getSheet(path);
+            const hit = findCell(xml, ref);
+            let cellXml: string;
+            if (kind === 'setFormula') {
+              cellXml = formulaCellXml(ref, (edit.op as { formula: string }).formula ?? '', hit?.sIdx);
+            } else if (kind === 'deleteRange') {
+              if (!hit) continue; // 目标本就为空,清空即无操作
+              cellXml = valueCellXml(ref, null, hit.sIdx);
+            } else {
+              const value = (edit.op as { value: CellValue }).value ?? null;
+              if (value === null && !hit) continue; // 写空到空格,跳过
+              cellXml = valueCellXml(ref, value, hit?.sIdx);
+            }
+            xml = upsertCell(xml, ref, cellXml, hit);
+            sheetCache.set(path, xml);
+          }
+        }
+        applied.push(edit.id);
+      } catch (e) {
+        dropped.push({ editId: edit.id, reason: e instanceof Error ? e.message : String(e) });
+      }
     }
 
     const out: OoxmlParts = {};
-    for (const [path, xml] of dirty) out[path] = encoder.encode(xml);
-    return out;
+    for (const [path, xml] of sheetCache) out[path] = encoder.encode(xml);
+    if (styleBox.ed && styleBox.ed.dirty && stylesPath) out[stylesPath] = encoder.encode(styleBox.ed.toXml());
+    return { parts: out, report: { applied, dropped } };
   };
 }
