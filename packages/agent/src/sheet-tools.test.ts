@@ -3,7 +3,7 @@
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
-import { aggregate, auxToolDefs, execSheetTool, readRange, type SheetData } from './sheet-tools.js';
+import { aggregate, auxToolDefs, execSheetTool, parseClarify, readRange, type SheetData } from './sheet-tools.js';
 
 const SHEET: SheetData = {
   a1: 'A1:C4',
@@ -51,7 +51,25 @@ test('execSheetTool:按工具名分发;无 sheet 或未知工具返回占位', (
   assert.equal(execSheetTool('nope', {}, SHEET), '(unknown tool)');
 });
 
-test('auxToolDefs:有整表快照才挂 read_range/aggregate', () => {
-  assert.deepEqual(auxToolDefs(false).map((d) => d.name), ['answer_user']);
-  assert.deepEqual(auxToolDefs(true).map((d) => d.name), ['answer_user', 'read_range', 'aggregate']);
+test('auxToolDefs:answer_user/ask_user 总在;有整表快照才挂 read_range/aggregate', () => {
+  assert.deepEqual(auxToolDefs(false).map((d) => d.name), ['answer_user', 'ask_user']);
+  assert.deepEqual(auxToolDefs(true).map((d) => d.name), ['answer_user', 'ask_user', 'read_range', 'aggregate']);
+});
+
+test('parseClarify:解析问题(字符串/对象皆可)+ 规范化 + 上限', () => {
+  const raw = JSON.stringify({ questions: [{ header: '图表类型', question: '画哪种图?', options: [{ label: '柱状图', description: '比大小' }, { label: '折线图' }] }] });
+  const qs = parseClarify(raw);
+  assert.equal(qs.length, 1);
+  assert.equal(qs[0]!.header, '图表类型');
+  assert.equal(qs[0]!.options[0]!.label, '柱状图');
+  assert.equal(qs[0]!.options[0]!.description, '比大小');
+  // 已解析对象同样可用 + multi 透传
+  assert.equal(parseClarify({ questions: [{ question: 'q?', multi: true, options: [{ label: 'a' }] }] })[0]!.multi, true);
+});
+
+test('parseClarify:丢弃无效问题/空选项,截断坏 JSON 不抛', () => {
+  assert.deepEqual(parseClarify('not json'), []);
+  assert.deepEqual(parseClarify({ questions: [{ question: '', options: [{ label: 'x' }] }] }), []); // 无题面
+  assert.deepEqual(parseClarify({ questions: [{ question: 'q?', options: [{ label: '' }] }] }), []); // 无有效选项
+  assert.equal(parseClarify({ questions: Array.from({ length: 9 }, () => ({ question: 'q?', options: [{ label: 'a' }] })) }).length, 4); // ≤4
 });

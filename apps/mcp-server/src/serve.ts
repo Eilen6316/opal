@@ -79,6 +79,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
           model,
         );
         if (r.kind === 'answer') send(res, 200, { answer: r.text });
+        else if (r.kind === 'clarify') send(res, 200, { questions: r.questions });
         else send(res, 200, { changeSet: r.changeSet, diff: rt.diff(r.changeSet) });
         return;
       }
@@ -107,6 +108,7 @@ const server = createServer((req: IncomingMessage, res: ServerResponse) => {
             (e) => {
               if (e.type === 'done') {
                 if (e.result.kind === 'changeset') sse({ type: 'done', kind: 'changeset', changeSet: e.result.changeSet, diff: rt.diff(e.result.changeSet) });
+                else if (e.result.kind === 'clarify') sse({ type: 'done', kind: 'clarify', questions: e.result.questions });
                 else sse({ type: 'done', kind: 'answer', text: e.result.text });
               } else {
                 sse(e);

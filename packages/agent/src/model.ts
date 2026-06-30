@@ -30,10 +30,16 @@ export interface HostDialect {
   buildChangeSet(req: ProposeRequest, proposal: unknown): ChangeSet;
 }
 
-/** Agent 对一条请求的回应:要么回答问题(聊天),要么提出表格改动(待审阅 diff)。 */
+/** 澄清提问的一个候选项:用户可点选,也可在"其他"里自己填。 */
+export interface ClarifyOption { label: string; description?: string }
+/** 一个澄清问题:像 Claude Code 那样给引导选择表(2-4 项)+ 允许自填;multi=可多选。 */
+export interface ClarifyQuestion { header?: string; question: string; options: ClarifyOption[]; multi?: boolean }
+
+/** Agent 对一条请求的回应:回答问题(聊天)/ 提出表格改动(待审阅 diff)/ 需求模糊时反向澄清提问。 */
 export type AgentResponse =
   | { kind: 'answer'; text: string }
-  | { kind: 'changeset'; changeSet: ChangeSet };
+  | { kind: 'changeset'; changeSet: ChangeSet }
+  | { kind: 'clarify'; questions: ClarifyQuestion[] };
 
 /** 流式增量事件:思考过程(reasoning)、回答正文(answer)、改表工具入参增量(draft,供"边生成边画")、调了只读/校验工具、收尾。 */
 export type StreamEvent =

@@ -20,6 +20,7 @@ interface GridOp { a1: string; value?: unknown; bg?: string; color?: string; bol
 type Turn =
   | { role: 'user'; text: string }
   | { role: 'assistant'; kind: 'answer'; text: string; reasoning?: string; streaming?: boolean }
+  | { role: 'assistant'; kind: 'clarify'; questions: ClarifyQuestion[]; reasoning?: string; answered?: boolean; answerText?: string }
   | { role: 'assistant'; kind: 'diff'; diff: AgentDiff; ops: GridOp[]; board?: BoardPatch; text?: string; reasoning?: string; reverted?: boolean; committed?: boolean; committedCount?: number };
 
 /** drawio 改动落到画板的句柄:editId→画板对象 id 映射 + 可重放的节点/连线(供逐条接受/拒绝)。 */
@@ -34,6 +35,7 @@ function buildHistory(thread: Turn[]): Array<{ role: 'user' | 'assistant'; conte
   const proj = thread.map((turn): { role: 'user' | 'assistant'; content: string } => {
     if (turn.role === 'user') return { role: 'user', content: turn.text };
     if (turn.kind === 'answer') return { role: 'assistant', content: turn.text };
+    if (turn.kind === 'clarify') return { role: 'assistant', content: '我向你澄清提问: ' + turn.questions.map((q) => q.question + '(候选: ' + q.options.map((o) => o.label).join('/') + ')').join(' | ') + (turn.answered ? '' : '(等待你的回答)') };
     const summary = '提出改动: ' + turn.diff.items.map((it) => `${it.ref} ${it.label}`).join('; ');
     const outcome = turn.reverted ? '(用户已撤销这些改动,文档未保留它们)' : turn.committed ? `(用户已接受并写入${turn.committedCount ?? turn.diff.items.length}处)` : '(已提出,待用户审阅,尚未确定写入)';
     return { role: 'assistant', content: summary + outcome };
@@ -72,6 +74,67 @@ function ThinkingPanel({ reasoning, streaming }: { reasoning: string; streaming?
         <span className="tp-chev">{expanded ? '▾' : '▸'}</span>
       </button>
       {expanded && <div className="tp-body">{reasoning || t('(无)')}</div>}
+    </div>
+  );
+}
+
+/** Agent 反向澄清的"引导选择"卡片(Claude Code 风):每题给候选项(单/多选)+「其他」自填;全部作答后提交。 */
+function ClarifyCard({ questions, answered, answerText, onSubmit }: { questions: ClarifyQuestion[]; answered?: boolean; answerText?: string; onSubmit: (text: string) => void }): ReactNode {
+  const t = useT();
+  const [sel, setSel] = useState<Record<number, string[]>>({});
+  const [other, setOther] = useState<Record<number, string>>({});
+  const pick = (qi: number, label: string, multi?: boolean): void => {
+    setSel((s) => {
+      const cur = s[qi] ?? [];
+      if (multi) return { ...s, [qi]: cur.includes(label) ? cur.filter((x) => x !== label) : [...cur, label] };
+      return { ...s, [qi]: cur.includes(label) ? [] : [label] };
+    });
+  };
+  const doneCount = questions.filter((_, qi) => (sel[qi]?.length ?? 0) > 0 || !!other[qi]?.trim()).length;
+  const ready = doneCount === questions.length;
+  const submit = (): void => {
+    if (!ready) return;
+    const lines = questions.map((q, qi) => {
+      const picks = [...(sel[qi] ?? [])];
+      const o = other[qi]?.trim();
+      if (o) picks.push(o);
+      return `- ${q.header || q.question}:${picks.join('、')}`;
+    });
+    onSubmit(t('我的选择如下,请据此继续:') + '\n' + lines.join('\n'));
+  };
+  if (answered) {
+    return (
+      <div className="clarify done">
+        <div className="cl-top"><IconSelect size={13} /> {t('已回复澄清')}</div>
+        {answerText ? <div className="cl-recap">{answerText}</div> : null}
+      </div>
+    );
+  }
+  return (
+    <div className="clarify">
+      <div className="cl-top"><IconSelect size={13} /> {t('需要你确认一下')}</div>
+      {questions.map((q, qi) => (
+        <div key={qi} className="cl-q">
+          <div className="cl-qhead">{q.header ? <span className="cl-tag">{q.header}</span> : null}<span className="cl-qtext">{q.question}</span>{q.multi ? <span className="cl-multi">{t('可多选')}</span> : null}</div>
+          <div className="cl-opts">
+            {q.options.map((o, oi) => {
+              const on = (sel[qi] ?? []).includes(o.label);
+              return (
+                <button key={oi} className={'cl-opt' + (on ? ' on' : '')} onClick={() => pick(qi, o.label, q.multi)}>
+                  <span className="cl-optlabel">{o.label}{oi === 0 ? <i className="cl-rec">{t('推荐')}</i> : null}</span>
+                  {o.description ? <span className="cl-optdesc">{o.description}</span> : null}
+                </button>
+              );
+            })}
+          </div>
+          <input className="cl-other" placeholder={t('或自己填…')} value={other[qi] ?? ''} onChange={(ev) => setOther((s) => ({ ...s, [qi]: ev.target.value }))} onKeyDown={(ev) => { if (ev.key === 'Enter' && ready) submit(); }} />
+        </div>
+      ))}
+      <div className="cl-acts">
+        <span className="cl-prog">{doneCount}/{questions.length}</span>
+        <span className="grow" />
+        <button className="btn solid" disabled={!ready} onClick={submit}>{t('提交')}</button>
+      </div>
     </div>
   );
 }
@@ -446,6 +509,9 @@ const FMT_ALIGN: Record<string, 'left' | 'center' | 'right'> = { 左对齐: 'lef
 interface AgentStyle { bold?: boolean; italic?: boolean; color?: string; bgColor?: string; align?: string; numberFormat?: string }
 interface AgentDiffItem { editId: string; ref: string; badge: string; label: string; after?: string; style?: AgentStyle }
 interface AgentDiff { changeSetId: string; hostId: string; intent: string; items: AgentDiffItem[] }
+/** Agent 反向澄清:像 Claude Code 那样给引导选择表(2-4 项)+ 允许自填。 */
+interface ClarifyOption { label: string; description?: string }
+interface ClarifyQuestion { header?: string; question: string; options: ClarifyOption[]; multi?: boolean }
 
 function Section({ label, children, defaultOpen = true }: { label: string; children: ReactNode; defaultOpen?: boolean }) {
   const [open, setOpen] = useState(defaultOpen);
@@ -719,7 +785,7 @@ export function App() {
           for (const c of chunks) {
             const line = c.split('\n').find((l) => l.startsWith('data: '));
             if (!line) continue;
-            let e: { type: string; delta?: string; name?: string; kind?: string; text?: string; diff?: AgentDiff; changeSet?: unknown; message?: string };
+            let e: { type: string; delta?: string; name?: string; kind?: string; text?: string; diff?: AgentDiff; changeSet?: unknown; questions?: ClarifyQuestion[]; message?: string };
             try { e = JSON.parse(line.slice(6)); } catch { continue; }
             if (e.type === 'reasoning') upd((tt) => (tt.kind === 'answer' ? { ...tt, reasoning: (tt.reasoning ?? '') + (e.delta ?? '') } : tt));
             else if (e.type === 'answer') upd((tt) => (tt.kind === 'answer' ? { ...tt, text: (tt.text ?? '') + (e.delta ?? '') } : tt));
@@ -768,6 +834,10 @@ export function App() {
                   setThread((th) => th.map((tt, i) => (i === th.length - 1 && tt.role === 'assistant' ? { role: 'assistant', kind: 'diff', diff, ops, text: tt.kind === 'answer' ? tt.text : undefined, reasoning: tt.kind === 'answer' ? tt.reasoning : undefined } : tt)));
                   if (ops.length) void playOps(ops); // 边画边改
                 }
+              } else if (e.kind === 'clarify' && e.questions?.length) {
+                const qs = e.questions;
+                // 把流式占位气泡替换成"引导选择"卡片(保留刚才的思考过程)
+                setThread((th) => th.map((tt, i) => (i === th.length - 1 && tt.role === 'assistant' ? { role: 'assistant', kind: 'clarify', questions: qs, reasoning: tt.kind === 'answer' ? tt.reasoning : undefined } : tt)));
               } else {
                 upd((tt) => (tt.kind === 'answer' ? { ...tt, text: e.text ?? tt.text, streaming: false } : tt));
               }
@@ -839,6 +909,11 @@ export function App() {
   /** 标记某条改动已被用户接受(写进投影历史,让 Agent 知道改动已采纳)。 */
   const markCommitted = (idx: number, count: number): void => {
     setThread((th) => th.map((tt, i) => (i === idx && tt.role === 'assistant' && tt.kind === 'diff' ? ({ ...tt, committed: true, committedCount: count } as Turn) : tt)));
+  };
+  /** 用户提交澄清选择:锁定该卡片 + 把选择作为新一轮指令发回(thread 续接,Agent 据此继续或再追问)。 */
+  const submitClarify = (idx: number, text: string): void => {
+    setThread((th) => th.map((tt, i) => (i === idx && tt.role === 'assistant' && tt.kind === 'clarify' ? ({ ...tt, answered: true, answerText: text } as Turn) : tt)));
+    void send(text);
   };
 
   // ── Agent「边画边改」可视化:把操作逐步播放到 Univer 网格,用户看着它一格格地改 ──
@@ -1371,6 +1446,16 @@ export function App() {
                             {turn.reasoning ? <ThinkingPanel reasoning={turn.reasoning} streaming={turn.streaming} /> : null}
                             {(turn.text || !turn.streaming) && <div className="answer-bubble md">{turn.text ? <Markdown text={turn.text} /> : <span className="dim">{t('(无内容)')}</span>}</div>}
                             {turn.streaming && !turn.text && !turn.reasoning && <div className="thinking"><span className="spin" /> {t('Agent 正在分析…')}</div>}
+                          </div>
+                        </div>
+                      );
+                    if (turn.kind === 'clarify')
+                      return (
+                        <div key={i} className="ai-msg">
+                          <img className="ai-av" src="/favicon.png" alt="" />
+                          <div className="ai-stack">
+                            {turn.reasoning ? <ThinkingPanel reasoning={turn.reasoning} /> : null}
+                            <ClarifyCard questions={turn.questions} answered={turn.answered} answerText={turn.answerText} onSubmit={(text) => submitClarify(i, text)} />
                           </div>
                         </div>
                       );

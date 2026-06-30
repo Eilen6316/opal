@@ -3,8 +3,9 @@
  * 保证默认 Claude 通道也拥有同样的 read_range/aggregate 取数 + answer_user 路由 + 多步 loop。
  * 各通道只负责把这里的"逻辑工具定义/系统提示/取数执行"映射到自家 SDK 的消息/工具格式。
  */
-import type { HostDialect, ProposeRequest } from './model.js';
-import { ROUTING_PREAMBLE, TOO_MANY_STEPS_MSG, ANSWER_USER_DESC, READ_RANGE_DESC, AGGREGATE_DESC } from './prompts/index.js';
+import type { ClarifyOption, ClarifyQuestion, HostDialect, ProposeRequest } from './model.js';
+import { safeParse } from './json-salvage.js';
+import { ROUTING_PREAMBLE, TOO_MANY_STEPS_MSG, ANSWER_USER_DESC, ASK_USER_DESC, READ_RANGE_DESC, AGGREGATE_DESC } from './prompts/index.js';
 
 /** 多步 loop 的步数上限(含一轮影子校验修复)。提示词均在 ./prompts(按场景分文件)。 */
 export const STEP_LIMIT = 8;
@@ -32,6 +33,38 @@ export const ANSWER_USER_DEF: ToolDef = {
   description: ANSWER_USER_DESC,
   parameters: { type: 'object', properties: { text: { type: 'string', description: '给用户的回答(简洁、可含数字结论)' } }, required: ['text'] },
 };
+export const ASK_USER_DEF: ToolDef = {
+  name: 'ask_user',
+  description: ASK_USER_DESC,
+  parameters: {
+    type: 'object',
+    properties: {
+      questions: {
+        type: 'array',
+        description: '1-4 个澄清问题。互相独立的问题可一并问;若后一个依赖前一个的答案,本轮只放最前面那个,下一轮再问下一个。',
+        items: {
+          type: 'object',
+          properties: {
+            header: { type: 'string', description: '问题的极短标签(≤8 字),如"图表类型""分组依据"' },
+            question: { type: 'string', description: '具体问题(以问号结尾)' },
+            multi: { type: 'boolean', description: '是否允许多选(默认单选)' },
+            options: {
+              type: 'array',
+              description: '2-4 个候选项;把最推荐的放第一个。用户也可不选、在"其他"里自己填。',
+              items: {
+                type: 'object',
+                properties: { label: { type: 'string', description: '候选项(简短)' }, description: { type: 'string', description: '该选项的说明/取舍(可选)' } },
+                required: ['label'],
+              },
+            },
+          },
+          required: ['question', 'options'],
+        },
+      },
+    },
+    required: ['questions'],
+  },
+};
 export const READ_RANGE_DEF: ToolDef = {
   name: 'read_range',
   description: READ_RANGE_DESC,
@@ -58,9 +91,32 @@ export const AGGREGATE_DEF: ToolDef = {
 };
 export interface AggWhere { col: string; op: '=' | '!=' | '>' | '<' | 'contains'; value: string | number }
 
-/** 辅助工具菜单:answer_user 总在;有整表快照时再加 read_range/aggregate 取数工具。 */
+/** 辅助工具菜单:answer_user / ask_user 总在;有整表快照时再加 read_range/aggregate 取数工具。 */
 export function auxToolDefs(hasSheet: boolean): ToolDef[] {
-  return hasSheet ? [ANSWER_USER_DEF, READ_RANGE_DEF, AGGREGATE_DEF] : [ANSWER_USER_DEF];
+  const base = [ANSWER_USER_DEF, ASK_USER_DEF];
+  return hasSheet ? [...base, READ_RANGE_DEF, AGGREGATE_DEF] : base;
+}
+
+/** 容错解析 ask_user 入参(字符串或已解析对象皆可)→ 规范化的澄清问题;无有效问题则返回 []。 */
+export function parseClarify(input: unknown): ClarifyQuestion[] {
+  const obj = (typeof input === 'string' ? safeParse(input) : (input ?? {})) as { questions?: unknown };
+  const arr = Array.isArray(obj.questions) ? obj.questions : [];
+  const out: ClarifyQuestion[] = [];
+  for (const q of arr.slice(0, 4)) {
+    if (!q || typeof q !== 'object') continue;
+    const qq = q as { header?: unknown; question?: unknown; multi?: unknown; options?: unknown };
+    const question = String(qq.question ?? '').trim();
+    if (!question) continue;
+    const options: ClarifyOption[] = [];
+    for (const o of (Array.isArray(qq.options) ? qq.options : []).slice(0, 6)) {
+      const oo = (o ?? {}) as { label?: unknown; description?: unknown };
+      const label = String(oo.label ?? '').trim();
+      if (label) options.push({ label, ...(oo.description ? { description: String(oo.description) } : {}) });
+    }
+    if (!options.length) continue;
+    out.push({ question, options, ...(qq.header ? { header: String(qq.header) } : {}), ...(qq.multi ? { multi: true } : {}) });
+  }
+  return out;
 }
 
 // ─────────────── 取数执行(read_range / aggregate) ───────────────

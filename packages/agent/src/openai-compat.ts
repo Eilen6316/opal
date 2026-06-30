@@ -9,7 +9,7 @@
 import OpenAI from 'openai';
 import type { ChangeSet } from '@otterpatch/core';
 import type { AgentResponse, HostDialect, ModelClient, ProposeRequest, RespondOptions, StreamEvent } from './model.js';
-import { STEP_LIMIT, TOO_MANY_STEPS_MSG, auxToolDefs, execSheetTool, recentHistory, respondSystem } from './sheet-tools.js';
+import { STEP_LIMIT, TOO_MANY_STEPS_MSG, auxToolDefs, execSheetTool, parseClarify, recentHistory, respondSystem } from './sheet-tools.js';
 import { NUDGE_DIRECT, EMPTY_RESULT_FALLBACK, TRUNCATED_FALLBACK } from './prompts/index.js';
 import { salvageProposalArgs, salvageText, safeParse } from './json-salvage.js';
 
@@ -159,6 +159,12 @@ export class OpenAICompatModelClient implements ModelClient {
       }
       const ans = calls.find((c) => c.function.name === 'answer_user');
       if (ans) return { kind: 'answer', text: salvageText(ans.function.arguments) || (msg.content ?? '').trim() };
+      const ask = calls.find((c) => c.function.name === 'ask_user');
+      if (ask) {
+        const questions = parseClarify(ask.function.arguments);
+        if (questions.length) return { kind: 'clarify', questions };
+        return { kind: 'answer', text: (msg.content ?? '').trim() || EMPTY_RESULT_FALLBACK };
+      }
 
       // 只读工具:执行 + 把结果回喂,继续 loop
       messages.push(msg);
@@ -229,6 +235,13 @@ export class OpenAICompatModelClient implements ModelClient {
       const ans = calls.find((c) => c.name === 'answer_user');
       if (ans) {
         const result: AgentResponse = { kind: 'answer', text: salvageText(ans.args) || content.trim() };
+        onEvent({ type: 'done', result });
+        return result;
+      }
+      const ask = calls.find((c) => c.name === 'ask_user');
+      if (ask) {
+        const questions = parseClarify(ask.args);
+        const result: AgentResponse = questions.length ? { kind: 'clarify', questions } : { kind: 'answer', text: content.trim() || EMPTY_RESULT_FALLBACK };
         onEvent({ type: 'done', result });
         return result;
       }

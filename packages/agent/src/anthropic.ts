@@ -9,7 +9,7 @@
 import Anthropic from '@anthropic-ai/sdk';
 import type { ChangeSet } from '@otterpatch/core';
 import type { AgentResponse, HostDialect, ModelClient, ProposeRequest, RespondOptions, StreamEvent } from './model.js';
-import { STEP_LIMIT, TOO_MANY_STEPS_MSG, auxToolDefs, execSheetTool, recentHistory, respondSystem } from './sheet-tools.js';
+import { STEP_LIMIT, TOO_MANY_STEPS_MSG, auxToolDefs, execSheetTool, parseClarify, recentHistory, respondSystem } from './sheet-tools.js';
 import { NUDGE_DIRECT, EMPTY_RESULT_FALLBACK, TRUNCATED_FALLBACK } from './prompts/index.js';
 import { salvageProposalArgs, salvageText } from './json-salvage.js';
 
@@ -111,6 +111,12 @@ export class AnthropicModelClient implements ModelClient {
       }
       const ans = toolUses.find((b) => b.name === 'answer_user');
       if (ans) return { kind: 'answer', text: (ans.input as { text?: string }).text ?? '' };
+      const ask = toolUses.find((b) => b.name === 'ask_user');
+      if (ask) {
+        const questions = parseClarify(ask.input);
+        if (questions.length) return { kind: 'clarify', questions };
+        return { kind: 'answer', text: text.trim() || EMPTY_RESULT_FALLBACK };
+      }
 
       // 只读工具:回显 assistant 内容 + 逐 tool_result,继续 loop
       messages.push({ role: 'assistant', content: assistantBlocks(text, toolUses) });
@@ -181,6 +187,13 @@ export class AnthropicModelClient implements ModelClient {
       const ans = toolUses.find((b) => b.name === 'answer_user');
       if (ans) {
         const result: AgentResponse = { kind: 'answer', text: salvageText(ans.json) || text.trim() };
+        onEvent({ type: 'done', result });
+        return result;
+      }
+      const ask = toolUses.find((b) => b.name === 'ask_user');
+      if (ask) {
+        const questions = parseClarify(ask.input);
+        const result: AgentResponse = questions.length ? { kind: 'clarify', questions } : { kind: 'answer', text: text.trim() || EMPTY_RESULT_FALLBACK };
         onEvent({ type: 'done', result });
         return result;
       }
