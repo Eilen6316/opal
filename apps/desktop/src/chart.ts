@@ -35,14 +35,24 @@ function buildOption(spec: ChartSpec): echarts.EChartsOption {
         { type: 'value' as const, name: spec.series.find((_, i) => onRight(i))?.name },
       ]
     : { type: 'value' as const };
+  const single = spec.series.length === 1; // 单系列:图例和标题重复,省掉更干净
+  const showLabel = spec.categories.length <= 12; // 类目不多就在柱顶/点上标数值
   return {
     ...base,
     tooltip: { trigger: 'axis' },
-    legend: { top: 28, data: spec.series.map((s) => s.name) },
-    grid: { left: 56, right: useDual ? 60 : 24, top: 64, bottom: 40 },
+    ...(single ? {} : { legend: { bottom: 0, data: spec.series.map((s) => s.name) } }),
+    grid: { left: 58, right: useDual ? 62 : 24, top: 54, bottom: single ? 34 : 52 },
     xAxis: { type: 'category', data: spec.categories },
     yAxis,
-    series: spec.series.map((s, i) => ({ name: s.name, type: spec.chartType, data: s.data, yAxisIndex: onRight(i) ? 1 : 0 })),
+    series: spec.series.map((s, i) => ({
+      name: s.name,
+      type: spec.chartType,
+      data: s.data,
+      yAxisIndex: onRight(i) ? 1 : 0,
+      barMaxWidth: 56,
+      smooth: spec.chartType === 'line',
+      ...(showLabel ? { label: { show: true, position: 'top' as const, fontSize: 10, color: '#475569' } } : {}),
+    })),
   };
 }
 

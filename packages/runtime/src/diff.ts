@@ -9,6 +9,7 @@ export type DiffBadge = 'add' | 'remove' | 'modify' | 'move';
 export interface OtterPatchDiffItem {
   editId: string;
   ref: string; // 人类可读锚点引用(A1 / mxCell id / 文本引述)
+  kind: string; // EditOp 的 kind(供前端区分"写单元格"还是"结构/对象操作如插图表",别把后者的摘要当值写进格子)
   badge: DiffBadge;
   label: string;
   after?: string;
@@ -119,7 +120,7 @@ export function buildDiff(cs: ChangeSet): OtterPatchDiff {
     intent: cs.meta.intent,
     items: cs.edits.map((e) => {
       const d = describe(e.op);
-      const item: OtterPatchDiffItem = { editId: e.id, ref: refOf(cs.anchors[e.target], e.target), badge: d.badge, label: d.label };
+      const item: OtterPatchDiffItem = { editId: e.id, ref: refOf(cs.anchors[e.target], e.target), kind: e.op.kind, badge: d.badge, label: d.label };
       if (d.after !== undefined) item.after = d.after;
       if (d.style) item.style = d.style;
       return item;

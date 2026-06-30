@@ -16,6 +16,10 @@ import { chartToPngDataUrl, gridToChartSpec, buildChartGrid, specFromInline } fr
 /** Agent 在网格上的一步操作(用于"边画边改"的可视化播放)。 */
 interface GridOp { a1: string; value?: unknown; bg?: string; color?: string; bold?: boolean; numFmt?: string; note: string; before?: unknown; editId?: string }
 
+/** 由 applyExcelStructure 直接落网格的"结构/对象操作"kind —— 这些【不能】被 diffToOps 当作写单元格值
+ *  (否则会把"插入图表"等的摘要文字写进格子);它们走 applyExcelStructure,不进 playOps。 */
+const ADV_KINDS = new Set(['insertRows', 'deleteRows', 'insertCols', 'deleteCols', 'mergeCells', 'unmergeCells', 'freezePanes', 'sortRange', 'deleteRange', 'conditionalFormat', 'dataValidation', 'autoFilter', 'insertChart']);
+
 /** 对话流里的一条消息(Cursor 式连续 thread)。 */
 type Turn =
   | { role: 'user'; text: string }
@@ -507,7 +511,7 @@ const FMT_ALIGN: Record<string, 'left' | 'center' | 'right'> = { 左对齐: 'lef
 
 /** otterpatch-serve 的 /propose 返回的可审阅 diff(结构对齐 @otterpatch/runtime 的 OtterPatchDiff;此处只取 JSON 形状,不引 Node 包)。 */
 interface AgentStyle { bold?: boolean; italic?: boolean; color?: string; bgColor?: string; align?: string; numberFormat?: string }
-interface AgentDiffItem { editId: string; ref: string; badge: string; label: string; after?: string; style?: AgentStyle }
+interface AgentDiffItem { editId: string; ref: string; kind?: string; badge: string; label: string; after?: string; style?: AgentStyle }
 interface AgentDiff { changeSetId: string; hostId: string; intent: string; items: AgentDiffItem[] }
 /** Agent 反向澄清:像 Claude Code 那样给引导选择表(2-4 项)+ 允许自填。 */
 interface ClarifyOption { label: string; description?: string }
@@ -975,10 +979,9 @@ export function App() {
     const c = cs as { edits?: Array<{ target: string; op: { kind?: string; count?: number; before?: boolean; rows?: number; cols?: number; by?: number; asc?: boolean; when?: string; v1?: number | string; v2?: number; rule?: string; list?: string[]; min?: number; max?: number; v?: number; style?: { bgColor?: string; color?: string; bold?: boolean; italic?: boolean }; chartType?: 'bar' | 'line' | 'pie'; title?: string; range?: string; categories?: string[]; series?: { name?: string; data?: number[] }[]; anchor?: string } }>; anchors?: Record<string, { portable?: { a1?: string } }> } | null;
     if (!api || !c?.edits) return;
     const colA = (n: number): string => { let s = ''; let x = n + 1; while (x > 0) { const r = (x - 1) % 26; s = String.fromCharCode(65 + r) + s; x = Math.floor((x - 1) / 26); } return s; };
-    const ADV = new Set(['insertRows', 'deleteRows', 'insertCols', 'deleteCols', 'mergeCells', 'unmergeCells', 'freezePanes', 'sortRange', 'deleteRange', 'conditionalFormat', 'dataValidation', 'autoFilter', 'insertChart']);
     for (const e of c.edits) {
       const k = e.op?.kind ?? '';
-      if (!ADV.has(k)) continue;
+      if (!ADV_KINDS.has(k)) continue;
       const a1 = (c.anchors?.[e.target]?.portable?.a1 ?? 'A1').replace(/^.*!/, '');
       const { row, col } = a1RowCol(a1);
       const n = e.op?.count ?? 1;
@@ -1031,7 +1034,7 @@ export function App() {
   /** 把 Agent 返回的 diff 转成可播放的网格操作:setStyle→真实底色/字色/加粗;否则写值。 */
   const diffToOps = (d: AgentDiff): GridOp[] =>
     d.items
-      .filter((it) => it.ref)
+      .filter((it) => it.ref && !ADV_KINDS.has(it.kind ?? '')) // 结构/对象操作(插图表/条件格式/筛选…)走 applyExcelStructure,别当单元格值写
       .map((it) => {
         const a1 = it.ref.replace(/^.*!/, ''); // 去掉 Sheet1! 前缀,落到当前表
         const s = it.style;
