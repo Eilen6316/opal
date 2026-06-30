@@ -11,7 +11,7 @@ import { LANGS, makeT, TContext, useT, type Lang } from './i18n.js';
 import { DRAWIO_SHAPES } from './drawio-shapes.js';
 import type { UniSel, SheetHandle } from './UniverSheet.js';
 import { Markdown } from './Markdown.js';
-import { chartToPngDataUrl, gridToChartSpec } from './chart.js';
+import { chartToPngDataUrl, gridToChartSpec, buildChartGrid } from './chart.js';
 
 /** Agent 在网格上的一步操作(用于"边画边改"的可视化播放)。 */
 interface GridOp { a1: string; value?: unknown; bg?: string; color?: string; bold?: boolean; numFmt?: string; note: string; before?: unknown; editId?: string }
@@ -920,8 +920,18 @@ export function App() {
       else if (k === 'dataValidation') api.dataValidation(a1, { kind: e.op?.rule ?? 'list', list: e.op?.list, min: e.op?.min, max: e.op?.max, v: e.op?.v });
       else if (k === 'autoFilter') api.createFilter(a1);
       else if (k === 'insertChart') {
-        const grid = api.readGrid(a1); // a1 = 含表头的数据范围
-        if (grid.length) {
+        // 关键修复:图表数据常由【同一 changeset 的 setValue】刚写入,而本函数(结构性操作)先于
+        // playOps 落值执行 —— 直接 readGrid 会读到空格 → 空图。改为用"本次写入值优先 + 改前实时值"叠加。
+        const written = new Map<string, unknown>();
+        for (const ed of c.edits) {
+          const ek = ed.op?.kind;
+          if (ek !== 'setValue' && ek !== 'setFormula') continue;
+          const ea1 = (c.anchors?.[ed.target]?.portable?.a1 ?? '').replace(/^.*!/, '').toUpperCase();
+          const ev = (ed.op as { value?: unknown; formula?: string }).value ?? (ed.op as { formula?: string }).formula;
+          if (ea1 && ev !== undefined) written.set(ea1, ev);
+        }
+        const grid = buildChartGrid(a1, written, (cell) => api.getValue(cell)); // a1 = 含表头的数据范围
+        if (grid.length && (grid[0]?.length ?? 0)) {
           const spec = gridToChartSpec(grid, e.op?.chartType ?? 'bar', e.op?.title ?? '图表');
           const png = chartToPngDataUrl(spec);
           // 放到数据范围右侧两列处
