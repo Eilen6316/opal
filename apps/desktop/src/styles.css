@@ -153,6 +153,8 @@ svg { display: block; }
 }
 /* 渲染区铺满:Excel 满幅网格 / drawio 画板 / Word·PPT 页面 */
 .canvas.excel { padding: 0; background-color: var(--surface); background-image: none; place-items: stretch; overflow: hidden; }
+.canvas.worddoc { padding: 0; background-color: var(--surface); background-image: none; place-items: stretch; overflow: hidden; }
+.univer-doc-host { width: 100%; height: 100%; overflow: hidden; }
 .univer-host { width: 100%; height: 100%; min-height: 0; }
 .univer-loading { display: grid; place-items: center; color: var(--muted); font-size: 13px; }
 .canvas.board { padding: 0; }
@@ -199,15 +201,6 @@ svg { display: block; }
 .h-n, .h-s { cursor: ns-resize; }
 .h-e, .h-w { cursor: ew-resize; }
 .doc-page { width: min(820px, 96%); min-height: 100%; background: #fff; box-shadow: var(--shadow); border-radius: 2px; display: grid; place-items: center; }
-/* Word 文档工作区 */
-.doc-page.wd-page { display: block; place-items: stretch; padding: 0; cursor: text; }
-.wd-sheet { padding: 56px 64px; font-family: Georgia, 'Songti SC', 'STSong', serif; color: #1f2430; line-height: 1.9; }
-.wd-h1 { font-size: 23px; font-weight: 700; margin: 0 0 18px; text-align: center; }
-.wd-h2 { font-size: 17px; font-weight: 700; margin: 22px 0 10px; }
-.wd-p { font-size: 14.5px; margin: 0 0 14px; text-align: justify; }
-.wd-hl { background: #fde68a; border-radius: 2px; padding: 0 1px; }
-.wd-changed { position: relative; }
-.wd-changed::before { content: ''; position: absolute; left: -18px; top: 3px; bottom: 3px; width: 3px; border-radius: 2px; background: var(--add); }
 /* drawio 顶部工具栏 */
 .dtoolbar { flex-shrink: 0; display: flex; align-items: center; gap: 2px; padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--line); }
 .dtool { width: 30px; height: 28px; display: grid; place-items: center; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-soft); cursor: pointer; font-size: 12px; }
