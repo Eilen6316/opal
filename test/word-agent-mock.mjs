@@ -59,20 +59,23 @@ try {
     const ins = [...document.querySelectorAll('.rd-page ins.rd-ins')].some((e) => /整体进度略超预期/.test(e.textContent));
     return del && ins;
   }));
-  ok('工作区出现"原文/修订/改后"切换条', await page.evaluate(() => document.querySelectorAll('.rd-difftoggle .rd-dt-seg').length === 3));
-  // 切到"原文":只看旧值,新值(ins)隐藏
+  ok('工作区出现四态切换条(原文/修订/清样/改后)', await page.evaluate(() => document.querySelectorAll('.rd-difftoggle .rd-dt-seg').length === 4));
+  ok('切换条含改动计数器', await page.evaluate(() => !!document.querySelector('.rd-dt-count')));
   await page.locator('.rd-difftoggle .rd-dt-seg', { hasText: '原文' }).click();
-  await sleep(150);
-  ok('切"原文"→ 只显示改前(ins 隐藏、del 常态)', await page.evaluate(() => {
-    const insHidden = [...document.querySelectorAll('.rd-page ins.rd-ins')].every((e) => getComputedStyle(e).display === 'none');
+  await sleep(200);
+  ok('切"原文"→ ins 收起(offsetWidth 0)、可见改前', await page.evaluate(() => {
+    const insHidden = [...document.querySelectorAll('.rd-page ins.rd-ins')].every((e) => e.offsetWidth === 0);
     return insHidden && document.querySelector('.rd-page').innerText.includes('整体进度符合预期');
   }));
-  // 切到"改后":只看新值,del 隐藏
   await page.locator('.rd-difftoggle .rd-dt-seg', { hasText: '改后' }).click();
-  await sleep(150);
-  ok('切"改后"→ 只显示改后(del 隐藏)', await page.evaluate(() => [...document.querySelectorAll('.rd-page del.rd-del')].every((e) => getComputedStyle(e).display === 'none')));
+  await sleep(200);
+  ok('切"改后"→ del 收起(offsetWidth 0)', await page.evaluate(() => [...document.querySelectorAll('.rd-page del.rd-del')].every((e) => e.offsetWidth === 0)));
   await page.locator('.rd-difftoggle .rd-dt-seg', { hasText: '修订' }).click();
   await sleep(150);
+  // 逐条改动悬浮卡:悬停一处改动 → 卡片含 接受/拒绝
+  await page.locator('.rd-page .rd-chg').first().hover();
+  await sleep(320);
+  ok('悬停改动 → 逐条卡片(含接受/拒绝)', await page.evaluate(() => { const c = document.querySelector('.rd-cardwrap'); return !!c && /接受/.test(c.textContent) && /拒绝/.test(c.textContent); }));
   ok('两条改动都打了 data-edit 标记', await page.evaluate(() => document.querySelectorAll('.rd-page [data-edit]').length >= 2));
   ok('setStyle 加粗已落到"下周计划"', await page.evaluate(() => {
     const spans = [...document.querySelectorAll('.rd-page [data-edit]')];

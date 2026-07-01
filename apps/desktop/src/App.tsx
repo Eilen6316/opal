@@ -554,6 +554,7 @@ export function App() {
   const [uniSel, setUniSel] = useState<UniSel | null>(null);
   const [excelDiff, setExcelDiff] = useState<'orig' | 'final'>('final'); // Excel 改动的 原文/改后 速览
   const [wordSel, setWordSel] = useState<WordSel | null>(null);
+  const [hoverCid, setHoverCid] = useState<string | null>(null); // 文档里/rail 悬停联动的改动 domId
   const [boardSel, setBoardSel] = useState<BoardSel | null>(null);
   const univerRef = useRef<SheetHandle>(null);
   const boardRef = useRef<BoardHandle>(null);
@@ -1169,7 +1170,19 @@ export function App() {
       else if (fmt === 'word') { const w = turn.word?.find((x) => x.editId === it.editId); if (w) wordRef.current?.applyEdit(w.domId, w.quote, w.style ? { fmt: w.style } : { replacement: w.replacement ?? '' }); }
       toggleAccept(it.editId, true);
     }
+    if (fmt === 'word') { const w = turn.word?.find((x) => x.editId === it.editId); if (w) wordRef.current?.markResolved(w.domId, 'accepted'); } // 行内收起 del、定格改后
     setReviewIdx(idx + 1);
+  };
+  /** 行内卡片 ✓/✕ → 复用 rail 的接受/拒绝(按 domId 找回条目在 diff.items 的序号)。 */
+  const resolveByCid = (domId: string, verb: 'accept' | 'reject'): void => {
+    for (let i = thread.length - 1; i >= 0; i--) {
+      const tt = thread[i];
+      if (!tt || tt.role !== 'assistant' || tt.kind !== 'diff' || !tt.word) continue;
+      const w = tt.word.find((x) => x.domId === domId); if (!w) continue;
+      const idx = tt.diff.items.findIndex((it) => it.editId === w.editId); if (idx < 0) return;
+      if (verb === 'accept') acceptItem(tt, idx); else rejectItem(tt, idx);
+      return;
+    }
   };
   const rejectItem = (turn: Extract<Turn, { kind: 'diff' }>, idx: number): void => {
     const it = turn.diff.items[idx]; if (!it) return;
@@ -1435,7 +1448,7 @@ export function App() {
                 <DrawioBoard ref={boardRef} onBoardSel={setBoardSel} />
               ) : fmt === 'word' ? (
                 <Suspense fallback={<div className="univer-loading">{t('加载文档编辑器…')}</div>}>
-                  <RichDoc ref={wordRef} onSelection={setWordSel} />
+                  <RichDoc ref={wordRef} onSelection={setWordSel} onChangeHover={setHoverCid} onChangeResolve={resolveByCid} />
                 </Suspense>
               ) : (
                 <div className="doc-page">
@@ -1558,7 +1571,10 @@ export function App() {
                                     const fmtDesc = it.after || (w?.style ? Object.keys(w.style).join('/') : '') || t('改格式');
                                     const cur = active && k === ridx;
                                     return (
-                                      <div key={it.editId} className={'gd-hunk' + (cur ? ' cur' : '') + (accepted.has(it.editId) ? '' : ' gd-rej')} onClick={() => { if (active) setReviewIdx(k); }} title={it.label}>
+                                      <div key={it.editId} data-cid={w?.domId} className={'gd-hunk' + (cur ? ' cur' : '') + (w && hoverCid && hoverCid === w.domId ? ' is-linked' : '') + (accepted.has(it.editId) ? '' : ' gd-rej')}
+                                        onMouseEnter={() => { if (w) { setHoverCid(w.domId); wordRef.current?.linkChange(w.domId); } }}
+                                        onMouseLeave={() => { setHoverCid(null); wordRef.current?.linkChange(null); }}
+                                        onClick={() => { if (active) setReviewIdx(k); if (w) wordRef.current?.activateChange(w.domId); }} title={it.label}>
                                         <div className="gd-ref"><span className="gd-at">@@</span> {refShort} <span className="gd-lbl">{it.label}</span></div>
                                         {isFmt ? (
                                           <div className="gd-line fmt"><span className="gd-sign">~</span>{fmtDesc}{oldV ? <span className="gd-ctx">　「{oldV.length > 42 ? oldV.slice(0, 42) + '…' : oldV}」</span> : null}</div>

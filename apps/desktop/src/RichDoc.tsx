@@ -51,12 +51,23 @@ export interface RichDocHandle {
   revert(editId: string): void;
   /** 选中/滚动到某条改动。 */
   highlight(editId: string): void;
+  /** rail 悬停某条 → 点亮文档里对应改动(cid);null 清除。 */
+  linkChange(cid: string | null): void;
+  /** 滚动定位到该改动并闪一下(rail 点击 / 步进导航)。 */
+  activateChange(cid: string): void;
+  /** 标记已接受/拒绝态(接受收起 del、拒绝收起 ins);null 复原。 */
+  markResolved(cid: string, state: 'accepted' | 'rejected' | null): void;
 }
 /** 上抛给 App 的 Word 选区(与 Excel 的 UniSel 对等,供输入区显示"已选"芯片 + 喂给 Agent 聚焦,含选区格式)。 */
 export interface WordSel { text: string; block: string; chars: number; font?: string; size?: number; bold?: boolean; italic?: boolean; align?: string }
 
 /** props 全可选(避免 Record<string,never> 与 ref 冲突)。 */
-export interface RichDocProps { className?: string; onSelection?: (s: WordSel | null) => void }
+export interface RichDocProps {
+  className?: string;
+  onSelection?: (s: WordSel | null) => void;
+  onChangeHover?: (cid: string | null) => void; // 文档里悬停某改动 → 点亮 rail 对应条
+  onChangeResolve?: (cid: string, verb: 'accept' | 'reject') => void; // 行内卡片 ✓/✕ → 走 rail 的接受/拒绝
+}
 
 type IconCmp = (p: { size?: number }) => ReactNode;
 
@@ -241,10 +252,11 @@ const transformCase = (txt: string, mode: string): string => {
   }
 };
 
-const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSelection }, ref) {
+const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSelection, onChangeHover, onChangeResolve }, ref) {
   const t = useT();
-  const selCb = useRef(onSelection);
-  selCb.current = onSelection;
+  const selCb = useRef(onSelection); selCb.current = onSelection;
+  const hoverCb = useRef(onChangeHover); hoverCb.current = onChangeHover;
+  const resolveCb = useRef(onChangeResolve); resolveCb.current = onChangeResolve;
   const edRef = useRef<HTMLDivElement>(null);
   const fileRef = useRef<HTMLInputElement>(null);
   const objRef = useRef<HTMLInputElement>(null);
@@ -261,8 +273,12 @@ const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSel
   const [toast, setToast] = useState<string | null>(null);
   const [wc, setWc] = useState<{ chars: number; noSpace: number; cjk: number; words: number; paras: number } | null>(null);
   const [nav, setNav] = useState<{ level: number; text: string; idx: number }[]>([]);
-  const [diffView, setDiffView] = useState<'orig' | 'mark' | 'final'>('mark'); // Agent 改动的三态:原文/修订/改后
+  const [diffView, setDiffView] = useState<'orig' | 'mark' | 'clean' | 'final'>('mark'); // Agent 改动四态:原文/修订/清样/改后
   const [hasDiff, setHasDiff] = useState(false); // 文档里是否存在 Agent 改动(决定是否显示修订切换条)
+  const [chgCount, setChgCount] = useState(0); // 改动条数(计数器)
+  const [stepPos, setStepPos] = useState(0); // 步进导航当前位置(0 基)
+  const [hoverCard, setHoverCard] = useState<{ cid: string; kind: string; oldText: string; newText: string; glyph: string; x: number; y: number } | null>(null); // 逐条改动悬浮卡
+  const cardTimer = useRef<number | null>(null);
   const [tip, setTip] = useState<{ text: string; x: number; y: number } | null>(null); // Office 式即时悬浮提示
   const tipTimer = useRef<number | null>(null);
   const lastFore = useRef('#c00000');
@@ -271,7 +287,7 @@ const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSel
   useEffect(() => {
     const saved = localStorage.getItem(STORAGE_KEY);
     if (edRef.current) edRef.current.innerHTML = saved && saved.trim() ? saved : DEMO_HTML;
-    setHasDiff(!!edRef.current?.querySelector('[data-edit],[data-edit-block],ins.rd-ins,del.rd-del'));
+    { const nx = edRef.current?.querySelectorAll('[data-cid]').length ?? 0; setChgCount(nx); setHasDiff(nx > 0); }
     try { document.execCommand('styleWithCSS', false, 'true'); } catch { /* 老浏览器忽略 */ }
     const onSel = (): void => {
       const s = window.getSelection();
@@ -345,6 +361,7 @@ const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSel
   useEffect(() => {
     const el = edRef.current; if (!el) return;
     el.classList.toggle('rd-diff-final', diffView === 'final');
+    el.classList.toggle('rd-diff-clean', diffView === 'clean');
     el.classList.toggle('rd-diff-orig', diffView === 'orig');
   }, [diffView, hasDiff]);
   useEffect(() => {
@@ -363,7 +380,46 @@ const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSel
   };
   const persist = (): void => { try { if (edRef.current) localStorage.setItem(STORAGE_KEY, edRef.current.innerHTML); } catch { /* 配额满忽略 */ } };
   const notify = (m: string): void => setToast(m);
-  const refreshHasDiff = (): void => setHasDiff(!!edRef.current?.querySelector('[data-edit],[data-edit-block],ins.rd-ins,del.rd-del'));
+  const refreshHasDiff = (): void => { const n = edRef.current?.querySelectorAll('[data-cid]').length ?? 0; setChgCount(n); setHasDiff(n > 0); };
+  // 逐条改动的悬浮卡(复用 .rd-tip 心智):悬停一处改动 → 卡片显示 类型·旧→新·✓/✕
+  const openCardFor = (g: HTMLElement): void => {
+    const cid = g.getAttribute('data-cid'); if (!cid) return;
+    const kind = g.getAttribute('data-kind') ?? 'replace';
+    const del = g.querySelector('del'); const ins = g.querySelector('ins');
+    const r = g.getBoundingClientRect();
+    const cut = (s: string): string => (s.length > 48 ? s.slice(0, 48) + '…' : s);
+    setHoverCard({ cid, kind, oldText: cut(del?.textContent ?? ''), newText: cut(kind === 'format' ? (g.textContent ?? '') : (ins?.textContent ?? '')), glyph: g.getAttribute('data-glyph') ?? '', x: Math.round(r.left + r.width / 2), y: Math.round(r.top) });
+    hoverCb.current?.(cid);
+  };
+  const onDocOver = (e: React.MouseEvent): void => {
+    const g = (e.target as HTMLElement).closest?.('.rd-chg') as HTMLElement | null;
+    if (!g) return;
+    if (cardTimer.current) window.clearTimeout(cardTimer.current);
+    cardTimer.current = window.setTimeout(() => openCardFor(g), 120);
+  };
+  const onDocOut = (e: React.MouseEvent): void => {
+    const from = (e.target as HTMLElement).closest?.('.rd-chg');
+    const to = e.relatedTarget as Node | null;
+    if (from && to && from.contains(to)) return;
+    if (to instanceof HTMLElement && to.closest?.('.rd-cardwrap')) return; // 移到卡片上,别关
+    if (cardTimer.current) window.clearTimeout(cardTimer.current);
+    cardTimer.current = window.setTimeout(() => { setHoverCard(null); hoverCb.current?.(null); }, 90);
+  };
+  const keepCard = (): void => { if (cardTimer.current) window.clearTimeout(cardTimer.current); };
+  const closeCard = (): void => { if (cardTimer.current) window.clearTimeout(cardTimer.current); setHoverCard(null); hoverCb.current?.(null); };
+  // 步进导航:上一处/下一处改动,定位并激活
+  const step = (dir: number): void => {
+    const root = edRef.current; if (!root) return;
+    const list = Array.from(root.querySelectorAll('[data-cid]')) as HTMLElement[];
+    if (!list.length) return;
+    const next = (stepPos + dir + list.length) % list.length;
+    setStepPos(next);
+    root.querySelectorAll('.is-active').forEach((e) => e.classList.remove('is-active'));
+    const el = list[next]!;
+    el.classList.add('is-active');
+    el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    el.classList.add('rd-flash'); setTimeout(() => el.classList.remove('rd-flash'), 1200);
+  };
 
   useImperativeHandle(ref, (): RichDocHandle => ({
     getText: () => edRef.current?.innerText ?? '',
@@ -418,32 +474,36 @@ const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSel
             blk.replaceWith(target);
           }
           styleBlockEl(target, fmt);
-          target.setAttribute('data-edit-block', editId);
+          target.setAttribute('data-edit-block', editId); target.setAttribute('data-cid', editId);
           undoMap.current.set(editId, { mode: 'block', prior, el: target }); // 存 el:同段多次改 或 跨回合 editId 撞名时仍能精确还原
           persist();
           return true;
         }
         // 找不到块 → 落回内联 span 处理
       }
-      // 文本改写 → Office 式行内修订(del 旧 + ins 新,可在"原文/修订/改后"三态间切换);纯字符级格式 → 样式 span(格式标记)
+      // 文本改写 → 一个 .rd-chg 组(data-edit/data-cid 只打在组上,revert 才干净)含 del(旧)+ ins(新);纯字符级格式 → .rd-chg.rd-fmt 第三通道
       const prior = range.cloneContents();
       const oldText = range.toString();
       if (opts.replacement != null) {
-        const frag = document.createDocumentFragment();
-        let firstEl: HTMLElement | null = null;
-        if (oldText) { const del = document.createElement('del'); del.className = 'rd-del'; del.setAttribute('data-edit', editId); del.textContent = oldText; frag.appendChild(del); firstEl = del; }
-        if (opts.replacement) { const ins = document.createElement('ins'); ins.className = 'rd-ins'; ins.setAttribute('data-edit', editId); if (fmt) styleSpan(ins, fmt); ins.textContent = opts.replacement; frag.appendChild(ins); if (!firstEl) firstEl = ins; }
+        const kind = oldText && opts.replacement ? 'replace' : opts.replacement ? 'insert' : 'delete';
+        const grp = document.createElement('span');
+        grp.className = 'rd-chg is-new'; grp.setAttribute('data-edit', editId); grp.setAttribute('data-cid', editId); grp.setAttribute('data-kind', kind); grp.setAttribute('tabindex', '0');
+        if (oldText) { const del = document.createElement('del'); del.className = 'rd-del'; del.textContent = oldText; grp.appendChild(del); }
+        if (opts.replacement) { const ins = document.createElement('ins'); ins.className = 'rd-ins'; if (fmt) styleSpan(ins, fmt); ins.textContent = opts.replacement; grp.appendChild(ins); }
         range.deleteContents();
-        if (firstEl) range.insertNode(frag);
-        undoMap.current.set(editId, { mode: 'span', prior, el: firstEl ?? root });
+        range.insertNode(grp);
+        undoMap.current.set(editId, { mode: 'span', prior, el: grp });
+        window.setTimeout(() => grp.classList.remove('is-new'), 1000);
       } else {
+        const glyph = fmt?.bold ? 'B' : fmt?.italic ? 'I' : fmt?.underline ? 'U' : fmt?.strike ? 'S' : (fmt?.color || fmt?.bgColor) ? '◆' : fmt?.size ? 'A±' : fmt?.font ? 'A' : '~';
         const span = document.createElement('span');
-        span.setAttribute('data-edit', editId);
+        span.className = 'rd-chg rd-fmt is-new'; span.setAttribute('data-edit', editId); span.setAttribute('data-cid', editId); span.setAttribute('data-kind', 'format'); span.setAttribute('data-glyph', glyph); span.setAttribute('tabindex', '0');
         if (fmt) styleSpan(span, fmt);
         span.textContent = oldText || quote;
         range.deleteContents();
         range.insertNode(span);
         undoMap.current.set(editId, { mode: 'span', prior, el: span });
+        window.setTimeout(() => span.classList.remove('is-new'), 1000);
       }
       refreshHasDiff();
       persist();
@@ -472,12 +532,34 @@ const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSel
       persist();
     },
     highlight: (editId) => {
+      const root = edRef.current; if (!root) return;
+      root.querySelectorAll('.is-active').forEach((e) => e.classList.remove('is-active'));
       const info = undoMap.current.get(editId);
-      const el = (info && 'el' in info && info.el && edRef.current?.contains(info.el) ? info.el : edRef.current?.querySelector(`[data-edit="${editId}"], [data-edit-block="${editId}"]`)) as HTMLElement | null;
+      const el = (info && 'el' in info && info.el && root.contains(info.el) ? info.el : root.querySelector(`[data-cid="${editId}"], [data-edit="${editId}"], [data-edit-block="${editId}"]`)) as HTMLElement | null;
       if (!el) return;
+      el.classList.add('is-active');
       el.scrollIntoView({ behavior: 'smooth', block: 'center' });
       el.classList.add('rd-flash');
       setTimeout(() => el.classList.remove('rd-flash'), 1200);
+    },
+    linkChange: (cid) => {
+      const root = edRef.current; if (!root) return;
+      root.querySelectorAll('.is-linked').forEach((e) => e.classList.remove('is-linked'));
+      if (cid) root.querySelector(`[data-cid="${cid}"]`)?.classList.add('is-linked');
+    },
+    activateChange: (cid) => {
+      const root = edRef.current; if (!root) return;
+      root.querySelectorAll('.is-active').forEach((e) => e.classList.remove('is-active'));
+      const el = root.querySelector(`[data-cid="${cid}"]`) as HTMLElement | null;
+      if (!el) return;
+      el.classList.add('is-active');
+      el.scrollIntoView({ behavior: 'smooth', block: 'center' });
+      el.classList.add('rd-flash'); setTimeout(() => el.classList.remove('rd-flash'), 1200);
+    },
+    markResolved: (cid, state) => {
+      const el = edRef.current?.querySelector(`[data-cid="${cid}"]`) as HTMLElement | null; if (!el) return;
+      el.classList.remove('is-accepted', 'is-rejected');
+      if (state) el.classList.add('is-' + state);
     },
   }), []);
 
@@ -1383,9 +1465,17 @@ const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSel
         {hasDiff ? (
           <div className="rd-difftoggle" role="group" aria-label="Agent 修订视图">
             <span className="rd-dt-lb"><span className="rd-dt-dot" />Agent 修订</span>
-            {([['orig', '原文'], ['mark', '修订'], ['final', '改后']] as const).map(([v, lb]) => (
-              <button key={v} className={'rd-dt-seg' + (diffView === v ? ' on' : '')} onMouseDown={(e) => { e.preventDefault(); setDiffView(v); }} title={v === 'orig' ? '只看改前' : v === 'mark' ? '红删绿增对照' : '只看改后'}>{lb}</button>
-            ))}
+            {chgCount > 0 ? <span className="rd-dt-count">{Math.min(stepPos + 1, chgCount)}<i>/</i>{chgCount}</span> : null}
+            <div className="rd-dt-seg-wrap" data-active={diffView}>
+              <span className="rd-dt-thumb" />
+              {([['orig', '原文'], ['mark', '修订'], ['clean', '清样'], ['final', '改后']] as const).map(([v, lb]) => (
+                <button key={v} className={'rd-dt-seg' + (diffView === v ? ' on' : '')} onMouseDown={(e) => { e.preventDefault(); setDiffView(v); }} title={v === 'orig' ? '只看改前' : v === 'mark' ? '红删绿增对照' : v === 'clean' ? '清样:只留改后 + 左侧改动条' : '只看改后'}>{lb}</button>
+              ))}
+            </div>
+            <span className="rd-dt-nav">
+              <button className="rd-dt-step" onMouseDown={(e) => { e.preventDefault(); step(-1); }} aria-label="上一处" title="上一处">‹</button>
+              <button className="rd-dt-step" onMouseDown={(e) => { e.preventDefault(); step(1); }} aria-label="下一处" title="下一处">›</button>
+            </span>
           </div>
         ) : null}
         {page.nav ? (
@@ -1397,7 +1487,7 @@ const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSel
           </aside>
         ) : null}
         <div className="rd-scroll">
-          <div className="rd-page" ref={edRef} contentEditable suppressContentEditableWarning onInput={() => { persist(); refreshHasDiff(); if (page.nav) refreshNav(); }} onMouseUp={onEdMouseUp} onClick={onEdClick} />
+          <div className="rd-page" ref={edRef} contentEditable suppressContentEditableWarning onInput={() => { persist(); refreshHasDiff(); if (page.nav) refreshNav(); }} onMouseUp={onEdMouseUp} onClick={onEdClick} onMouseOver={onDocOver} onMouseOut={onDocOut} />
         </div>
       </div>
 
@@ -1421,6 +1511,22 @@ const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSel
         </>
       ) : null}
 
+      {hoverCard ? (
+        <div className="rd-cardwrap" style={{ left: hoverCard.x, top: hoverCard.y }} onMouseEnter={keepCard} onMouseLeave={closeCard}>
+          <div className="rd-card">
+            <div className="rd-card-h"><span className="rd-card-dot" /><span className="rd-card-kind">{({ replace: '替换', insert: '插入', delete: '删除', format: '改格式' } as Record<string, string>)[hoverCard.kind] ?? '改动'}</span></div>
+            {hoverCard.kind === 'format' ? (
+              <div className="rd-card-fmt"><span className="rd-fmt-chip">{hoverCard.glyph}</span>{hoverCard.newText}</div>
+            ) : (
+              <div className="rd-card-diff">{hoverCard.oldText ? <span className="rd-card-old">{hoverCard.oldText}</span> : null}{hoverCard.oldText && hoverCard.newText ? <span className="rd-card-arw">→</span> : null}{hoverCard.newText ? <span className="rd-card-new">{hoverCard.newText}</span> : null}</div>
+            )}
+            <div className="rd-card-acts">
+              <button className="rd-cbtn no" onMouseDown={(e) => { e.preventDefault(); resolveCb.current?.(hoverCard.cid, 'reject'); closeCard(); }}>✕ 拒绝</button>
+              <button className="rd-cbtn ok" onMouseDown={(e) => { e.preventDefault(); resolveCb.current?.(hoverCard.cid, 'accept'); closeCard(); }}>✓ 接受</button>
+            </div>
+          </div>
+        </div>
+      ) : null}
       {tip ? <div className="rd-tip" style={{ left: tip.x, top: tip.y }}>{tip.text}</div> : null}
       {toast ? <div className="rd-toast">{toast}</div> : null}
     </div>
