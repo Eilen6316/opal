@@ -41,6 +41,14 @@ try {
   ok('格式改动行(~ 标红)', await page.evaluate(() => [...document.querySelectorAll('.gd-line.fmt')].some((e) => /标红/.test(e.textContent))));
   ok('hunk 头含单元格引用 C2', await page.evaluate(() => [...document.querySelectorAll('.gd-ref')].some((e) => /C2/.test(e.textContent))));
 
+  // Excel 工作区"原文/改后"速览条
+  ok('Excel 出现"原文/改后"速览条(2 段)', await page.evaluate(() => document.querySelectorAll('.excel-difftoggle .rd-dt-seg').length === 2));
+  await page.locator('.excel-difftoggle .rd-dt-seg', { hasText: '原文' }).click();
+  await sleep(250);
+  ok('切"原文"→ 按钮激活、无报错', await page.evaluate(() => !!document.querySelector('.excel-difftoggle .rd-dt-seg.on')));
+  await page.locator('.excel-difftoggle .rd-dt-seg', { hasText: '改后' }).click();
+  await sleep(250);
+
   await page.locator('.reviewbox .btn.solid').click();
   await sleep(400);
   ok('全部接受 → 显示"已采纳"', await page.evaluate(() => /已采纳/.test(document.querySelector('.reviewbox')?.textContent || '')));

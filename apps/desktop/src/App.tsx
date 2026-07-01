@@ -552,6 +552,7 @@ export function App() {
   const [apiKey, setApiKey] = useState(() => lsGet('oa.apiKey', ''));
   const [server, setServer] = useState(() => lsGet('oa.server', 'http://localhost:4319'));
   const [uniSel, setUniSel] = useState<UniSel | null>(null);
+  const [excelDiff, setExcelDiff] = useState<'orig' | 'final'>('final'); // Excel 改动的 原文/改后 速览
   const [wordSel, setWordSel] = useState<WordSel | null>(null);
   const [boardSel, setBoardSel] = useState<BoardSel | null>(null);
   const univerRef = useRef<SheetHandle>(null);
@@ -1143,6 +1144,14 @@ export function App() {
     if (op.bg) api.setBackground(op.a1, null);
     if (op.color) api.setFontColor(op.a1, '#1f2937');
   };
+  /** Excel 改动的"原文/改后"速览:把最近一回合改动的格子在改前值/改后值间切换。 */
+  const applyExcelDiffView = (view: 'orig' | 'final'): void => {
+    let turn: Extract<Turn, { kind: 'diff' }> | undefined;
+    for (let i = thread.length - 1; i >= 0; i--) { const tt = thread[i]; if (tt && tt.role === 'assistant' && tt.kind === 'diff' && tt.ops.length) { turn = tt; break; } }
+    if (!turn) return;
+    for (const op of turn.ops) { if (view === 'orig') revertGridOp(op); else applyGridOp(op); }
+    setExcelDiff(view);
+  };
   const reapplyBoardObj = (o: { node?: BNode; edge?: BEdge }): void =>
     boardRef.current?.addObjects(o.node ? [o.node] : [], o.edge ? [o.edge] : []);
   /** 高亮当前审阅的改动:Excel 聚焦该格、drawio 高亮该对象。 */
@@ -1409,9 +1418,19 @@ export function App() {
             )}
             <div className={'canvas' + (isExcel ? ' excel' : fmt === 'drawio' ? ' board' : fmt === 'word' ? ' worddoc' : ' doc')}>
               {isExcel ? (
-                <Suspense fallback={<div className="univer-loading">{t('加载表格引擎…')}</div>}>
-                  <UniverSheet ref={univerRef} onSelection={setUniSel} />
-                </Suspense>
+                <>
+                  {thread.some((tt) => tt.role === 'assistant' && tt.kind === 'diff' && tt.ops.length > 0) ? (
+                    <div className="rd-difftoggle excel-difftoggle" role="group" aria-label="Excel 改动视图">
+                      <span className="rd-dt-lb"><span className="rd-dt-dot" />Agent 改动</span>
+                      {([['orig', '原文'], ['final', '改后']] as const).map(([v, lb]) => (
+                        <button key={v} className={'rd-dt-seg' + (excelDiff === v ? ' on' : '')} onMouseDown={(e) => { e.preventDefault(); applyExcelDiffView(v); }} title={v === 'orig' ? '看改前的值' : '看改后的值'}>{lb}</button>
+                      ))}
+                    </div>
+                  ) : null}
+                  <Suspense fallback={<div className="univer-loading">{t('加载表格引擎…')}</div>}>
+                    <UniverSheet ref={univerRef} onSelection={setUniSel} />
+                  </Suspense>
+                </>
               ) : fmt === 'drawio' ? (
                 <DrawioBoard ref={boardRef} onBoardSel={setBoardSel} />
               ) : fmt === 'word' ? (
