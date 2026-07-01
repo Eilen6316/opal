@@ -6,11 +6,11 @@
 import { forwardRef, useEffect, useImperativeHandle, useRef, type ReactNode } from 'react';
 import { useT } from './i18n.js';
 import {
-  IconUndo, IconScissors, IconCopy, IconFormatBrush, IconStrikethrough,
+  IconUndo, IconRedo, IconScissors, IconCopy, IconFormatBrush, IconStrikethrough,
   IconSuperscript, IconSubscript, IconFontGrow, IconFontShrink, IconFontColor, IconHighlighter,
   IconAlignLeft, IconAlignCenter, IconAlignRight, IconAlignJustify,
-  IconIndentIncrease, IconIndentDecrease, IconLineSpacing,
-  IconLink, IconTable, IconImage, IconSearch, IconClearFormat,
+  IconIndentIncrease, IconIndentDecrease, IconBulletsRb, IconNumberingRb,
+  IconLink, IconTable, IconImage, IconHorizontalRule, IconSearch, IconClearFormat,
 } from './icons.js';
 
 export interface DocFmt { bold?: boolean; italic?: boolean; underline?: boolean; strike?: boolean; font?: string; size?: number; color?: string; align?: 'left' | 'center' | 'right' }
@@ -305,69 +305,81 @@ const RichDoc = forwardRef<RichDocHandle, Record<string, never>>(function RichDo
   return (
     <div className="rd-wrap">
       <div className="rd-toolbar">
-        {/* 撤销 / 剪贴板 */}
-        <Btn cmd="undo" title={t('撤销')}><IconUndo size={15} /></Btn>
-        <Btn cmd="redo" title={t('重做')}><span className="rd-gl flip">↶</span></Btn>
-        <span className="rd-sep" />
-        <Btn cmd="cut" title={t('剪切')}><IconScissors size={15} /></Btn>
-        <Btn cmd="copy" title={t('复制')}><IconCopy size={15} /></Btn>
-        <ABtn act={capturePaint} title={t('格式刷')}><IconFormatBrush size={15} /></ABtn>
-        <span className="rd-sep" />
-        {/* 字体 / 字号 */}
-        <select className="rd-sel" title={t('字体')} defaultValue="" onChange={(e) => { setFont(e.target.value); e.currentTarget.selectedIndex = 0; }}>
-          <option value="">{t('字体')}</option>
-          {FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
-        </select>
-        <select className="rd-sel sm" title={t('字号')} defaultValue="" onChange={(e) => { setSize(e.target.value); e.currentTarget.selectedIndex = 0; }}>
-          <option value="">{t('字号')}</option>
-          {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        <ABtn act={() => stepFont(1)} title={t('增大字号')}><IconFontGrow size={15} /></ABtn>
-        <ABtn act={() => stepFont(-1)} title={t('减小字号')}><IconFontShrink size={15} /></ABtn>
-        <span className="rd-sep" />
-        {/* 字形 */}
-        <Btn cmd="bold" title={t('加粗')}><b>B</b></Btn>
-        <Btn cmd="italic" title={t('斜体')}><i>I</i></Btn>
-        <Btn cmd="underline" title={t('下划线')}><u>U</u></Btn>
-        <Btn cmd="strikeThrough" title={t('删除线')}><IconStrikethrough size={15} /></Btn>
-        <Btn cmd="superscript" title={t('上标')}><IconSuperscript size={15} /></Btn>
-        <Btn cmd="subscript" title={t('下标')}><IconSubscript size={15} /></Btn>
-        <label className="rd-color" title={t('字体颜色')}><IconFontColor size={15} /><input type="color" onChange={(e) => exec('foreColor', e.target.value)} /></label>
-        <label className="rd-color hl" title={t('高亮')}><IconHighlighter size={15} /><input type="color" defaultValue="#ffe600" onChange={(e) => exec('hiliteColor', e.target.value)} /></label>
-        <span className="rd-sep" />
-        {/* 段落:对齐 / 缩进 / 行距 / 列表 */}
-        <Btn cmd="justifyLeft" title={t('左对齐')}><IconAlignLeft size={15} /></Btn>
-        <Btn cmd="justifyCenter" title={t('居中')}><IconAlignCenter size={15} /></Btn>
-        <Btn cmd="justifyRight" title={t('右对齐')}><IconAlignRight size={15} /></Btn>
-        <Btn cmd="justifyFull" title={t('两端对齐')}><IconAlignJustify size={15} /></Btn>
-        <Btn cmd="outdent" title={t('减少缩进')}><IconIndentDecrease size={15} /></Btn>
-        <Btn cmd="indent" title={t('增加缩进')}><IconIndentIncrease size={15} /></Btn>
-        <select className="rd-sel sm ico" title={t('行距')} defaultValue="" onChange={(e) => { setLineSpacing(e.target.value); e.currentTarget.selectedIndex = 0; }}>
-          <option value="">{t('行距')}</option>
-          {LINE_SPACINGS.map((v) => <option key={v} value={v}>{v}</option>)}
-        </select>
-        <Btn cmd="insertUnorderedList" title={t('项目符号')}><span className="rd-gl">•≡</span></Btn>
-        <Btn cmd="insertOrderedList" title={t('编号')}><span className="rd-gl">1.≡</span></Btn>
-        <span className="rd-sep" />
-        {/* 样式 */}
-        <select className="rd-sel" title={t('样式')} defaultValue="" onChange={(e) => { if (e.target.value) exec('formatBlock', e.target.value); e.currentTarget.selectedIndex = 0; }}>
-          <option value="">{t('样式')}</option>
-          <option value="p">{t('正文')}</option>
-          <option value="h1">{t('标题1')}</option>
-          <option value="h2">{t('标题2')}</option>
-          <option value="h3">{t('标题3')}</option>
-          <option value="blockquote">{t('引用')}</option>
-        </select>
-        <span className="rd-sep" />
-        {/* 插入 */}
-        <ABtn act={insertLink} title={t('超链接')}><IconLink size={15} /></ABtn>
-        <ABtn act={insertTable} title={t('插入表格')}><IconTable size={15} /></ABtn>
-        <ABtn act={() => fileRef.current?.click()} title={t('插入图片')}><IconImage size={15} /></ABtn>
-        <Btn cmd="insertHorizontalRule" title={t('分隔线')}><span className="rd-gl">—</span></Btn>
-        <span className="rd-sep" />
-        <ABtn act={findReplace} title={t('查找替换')}><IconSearch size={15} /></ABtn>
-        <Btn cmd="removeFormat" title={t('清除格式')}><IconClearFormat size={15} /></Btn>
+        {/* 隐藏文件选择器:置首(display:none 不占位),使末组正确成为 :last-of-type,无尾随分隔线 */}
         <input ref={fileRef} type="file" accept="image/*" hidden onChange={onPickImg} />
+        {/* ① 历史 */}
+        <div className="rd-grp">
+          <Btn cmd="undo" title={t('撤销')}><IconUndo size={15} /></Btn>
+          <Btn cmd="redo" title={t('重做')}><IconRedo size={15} /></Btn>
+        </div>
+        {/* ② 剪贴板 */}
+        <div className="rd-grp">
+          <Btn cmd="cut" title={t('剪切')}><IconScissors size={15} /></Btn>
+          <Btn cmd="copy" title={t('复制')}><IconCopy size={15} /></Btn>
+          <ABtn act={capturePaint} title={t('格式刷')}><IconFormatBrush size={15} /></ABtn>
+        </div>
+        {/* ③ 字体 / 字号 */}
+        <div className="rd-grp">
+          <select className="rd-sel" title={t('字体')} defaultValue="" onChange={(e) => { setFont(e.target.value); e.currentTarget.selectedIndex = 0; }}>
+            <option value="">{t('字体')}</option>
+            {FONTS.map((f) => <option key={f} value={f}>{f}</option>)}
+          </select>
+          <select className="rd-sel sm" title={t('字号')} defaultValue="" onChange={(e) => { setSize(e.target.value); e.currentTarget.selectedIndex = 0; }}>
+            <option value="">{t('字号')}</option>
+            {SIZES.map((s) => <option key={s} value={s}>{s}</option>)}
+          </select>
+          <ABtn act={() => stepFont(1)} title={t('增大字号')}><IconFontGrow size={15} /></ABtn>
+          <ABtn act={() => stepFont(-1)} title={t('减小字号')}><IconFontShrink size={15} /></ABtn>
+        </div>
+        {/* ④ 字符 */}
+        <div className="rd-grp">
+          <Btn cmd="bold" title={t('加粗')}><b>B</b></Btn>
+          <Btn cmd="italic" title={t('斜体')}><i>I</i></Btn>
+          <Btn cmd="underline" title={t('下划线')}><u>U</u></Btn>
+          <Btn cmd="strikeThrough" title={t('删除线')}><IconStrikethrough size={15} /></Btn>
+          <Btn cmd="superscript" title={t('上标')}><IconSuperscript size={15} /></Btn>
+          <Btn cmd="subscript" title={t('下标')}><IconSubscript size={15} /></Btn>
+          <label className="rd-color" title={t('字体颜色')}><IconFontColor size={15} /><input type="color" onChange={(e) => exec('foreColor', e.target.value)} /></label>
+          <label className="rd-color hl" title={t('高亮')}><IconHighlighter size={15} /><input type="color" defaultValue="#ffe600" onChange={(e) => exec('hiliteColor', e.target.value)} /></label>
+        </div>
+        {/* ⑤ 段落:对齐 / 缩进 / 行距 / 列表 */}
+        <div className="rd-grp">
+          <Btn cmd="justifyLeft" title={t('左对齐')}><IconAlignLeft size={15} /></Btn>
+          <Btn cmd="justifyCenter" title={t('居中')}><IconAlignCenter size={15} /></Btn>
+          <Btn cmd="justifyRight" title={t('右对齐')}><IconAlignRight size={15} /></Btn>
+          <Btn cmd="justifyFull" title={t('两端对齐')}><IconAlignJustify size={15} /></Btn>
+          <Btn cmd="outdent" title={t('减少缩进')}><IconIndentDecrease size={15} /></Btn>
+          <Btn cmd="indent" title={t('增加缩进')}><IconIndentIncrease size={15} /></Btn>
+          <select className="rd-sel sm ico" title={t('行距')} defaultValue="" onChange={(e) => { setLineSpacing(e.target.value); e.currentTarget.selectedIndex = 0; }}>
+            <option value="">{t('行距')}</option>
+            {LINE_SPACINGS.map((v) => <option key={v} value={v}>{v}</option>)}
+          </select>
+          <Btn cmd="insertUnorderedList" title={t('项目符号')}><IconBulletsRb size={15} /></Btn>
+          <Btn cmd="insertOrderedList" title={t('编号')}><IconNumberingRb size={15} /></Btn>
+        </div>
+        {/* ⑥ 样式 */}
+        <div className="rd-grp">
+          <select className="rd-sel" title={t('样式')} defaultValue="" onChange={(e) => { if (e.target.value) exec('formatBlock', e.target.value); e.currentTarget.selectedIndex = 0; }}>
+            <option value="">{t('样式')}</option>
+            <option value="p">{t('正文')}</option>
+            <option value="h1">{t('标题1')}</option>
+            <option value="h2">{t('标题2')}</option>
+            <option value="h3">{t('标题3')}</option>
+            <option value="blockquote">{t('引用')}</option>
+          </select>
+        </div>
+        {/* ⑦ 插入 */}
+        <div className="rd-grp">
+          <ABtn act={insertLink} title={t('超链接')}><IconLink size={15} /></ABtn>
+          <ABtn act={insertTable} title={t('插入表格')}><IconTable size={15} /></ABtn>
+          <ABtn act={() => fileRef.current?.click()} title={t('插入图片')}><IconImage size={15} /></ABtn>
+          <Btn cmd="insertHorizontalRule" title={t('分隔线')}><IconHorizontalRule size={15} /></Btn>
+        </div>
+        {/* ⑧ 工具 */}
+        <div className="rd-grp">
+          <ABtn act={findReplace} title={t('查找替换')}><IconSearch size={15} /></ABtn>
+          <Btn cmd="removeFormat" title={t('清除格式')}><IconClearFormat size={15} /></Btn>
+        </div>
       </div>
       <div className="rd-scroll">
         <div className="rd-page" ref={edRef} contentEditable suppressContentEditableWarning onInput={persist} onMouseUp={onEdMouseUp} />

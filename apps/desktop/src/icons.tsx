@@ -117,6 +117,19 @@ export const IconUndo = (p: P) => (
     <path d="M21 17a9 9 0 0 0-9-9 9 9 0 0 0-6 2.3L3 13" />
   </Svg>
 );
+export const IconRedo = (p: P) => (
+  <Svg size={p.size}>
+    <path d="M21 7v6h-6" />
+    <path d="M3 17a9 9 0 0 1 9-9 9 9 0 0 1 6 2.3L21 13" />
+  </Svg>
+);
+export const IconHorizontalRule = (p: P) => (
+  <Svg size={p.size}>
+    <line x1="3" y1="6" x2="21" y2="6" strokeOpacity={0.35} />
+    <line x1="3" y1="12" x2="21" y2="12" />
+    <line x1="3" y1="18" x2="21" y2="18" strokeOpacity={0.35} />
+  </Svg>
+);
 export const IconCheck = (p: P) => (
   <Svg size={p.size}>
     <path d="M20 6 9 17l-5-5" />

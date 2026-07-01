@@ -156,16 +156,23 @@ svg { display: block; }
 .canvas.worddoc { padding: 0; background-color: var(--surface); background-image: none; place-items: stretch; overflow: hidden; }
 /* 自控富文本「Word」编辑器 */
 .rd-wrap { display: flex; flex-direction: column; width: 100%; height: 100%; overflow: hidden; background: #eef0f2; }
-.rd-toolbar { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 2px; padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--line); }
-.rd-btn { min-width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; padding: 0 6px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-soft); cursor: pointer; font-size: 13px; line-height: 1; }
+/* 工具栏:横向排布,逻辑组(.rd-grp)为最小换行单位;字形已全部图标化 */
+.rd-toolbar { flex-shrink: 0; display: flex; flex-wrap: wrap; align-items: center; gap: 4px 6px; padding: 6px 12px; background: var(--surface); border-bottom: 1px solid var(--line); }
+/* 逻辑分组:组内不换行 → 整组一起参与换行,组永不被劈开 */
+.rd-grp { position: relative; display: flex; flex: 0 0 auto; flex-wrap: nowrap; align-items: center; gap: 2px; padding-right: 7px; }
+/* 组间竖线:画在右侧 padding 内,复刻旧 .rd-sep 的 18px 居中细线,绝不落单在行首/行尾(:last-of-type 排除隐藏 input 后的末组) */
+.rd-grp:not(:last-of-type)::after { content: ""; position: absolute; right: 0; top: 50%; transform: translateY(-50%); width: 1px; height: 18px; background: var(--line); }
+.rd-btn { box-sizing: border-box; min-width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; gap: 3px; padding: 0 6px; border: 1px solid transparent; border-radius: 6px; background: transparent; color: var(--text-soft); cursor: pointer; font-size: 13px; line-height: 1; }
 .rd-btn:hover { background: var(--fill); border-color: var(--line); }
-.rd-btn b, .rd-btn i, .rd-btn u { font-size: 14px; color: var(--text); }
-.rd-gl { font-size: 13px; color: var(--text-soft); }
-.rd-gl.flip { display: inline-block; transform: scaleX(-1); }
-.rd-sep { width: 1px; height: 18px; background: var(--line); margin: 0 4px; }
-.rd-sel { height: 28px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12.5px; padding: 0 4px; cursor: pointer; max-width: 120px; }
+/* 关键对齐:SVG 转 block,消除 inline 基线空隙,15px 图标在 28px 内真正垂直居中 */
+.rd-btn svg, .rd-color svg { display: block; }
+.rd-color svg { pointer-events: none; }
+/* B / I / U 保留字母(行业惯例),压平行高使其与线性图标同权重 */
+.rd-btn b, .rd-btn i, .rd-btn u { font-size: 14px; line-height: 1; color: var(--text); }
+.rd-sel { box-sizing: border-box; height: 28px; border: 1px solid var(--line); border-radius: 6px; background: var(--surface); color: var(--text); font-size: 12.5px; padding: 0 6px; cursor: pointer; max-width: 120px; vertical-align: middle; }
 .rd-sel.sm { max-width: 72px; }
-.rd-color { position: relative; min-width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 6px; cursor: pointer; font-weight: 700; color: var(--text); }
+.rd-sel.ico { max-width: 68px; }
+.rd-color { box-sizing: border-box; position: relative; min-width: 28px; height: 28px; display: inline-flex; align-items: center; justify-content: center; border: 1px solid transparent; border-radius: 6px; cursor: pointer; color: var(--text); }
 .rd-color:hover { background: var(--fill); border-color: var(--line); }
 .rd-color.hl { color: #d97706; }
 .rd-color input { position: absolute; inset: 0; opacity: 0; cursor: pointer; }
@@ -183,8 +190,6 @@ svg { display: block; }
 .rd-page .rd-tbl { border-collapse: collapse; width: 100%; margin: 12px 0; }
 .rd-page .rd-tbl td, .rd-page .rd-tbl th { border: 1px solid #c9ced6; padding: 6px 9px; min-width: 40px; vertical-align: top; }
 .rd-page.rd-painting { cursor: cell; }
-.rd-sel.ico { max-width: 68px; }
-.rd-color svg { pointer-events: none; }
 .rd-page [data-edit] { background: rgba(37,99,235,0.06); border-radius: 2px; }
 .rd-flash { animation: rdflash 1.2s ease; }
 @keyframes rdflash { 0%, 100% { background: rgba(37,99,235,0.06); } 30% { background: #fde68a; } }
