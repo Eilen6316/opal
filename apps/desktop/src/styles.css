@@ -174,7 +174,17 @@ svg { display: block; }
 .rd-page:focus { box-shadow: var(--shadow), 0 0 0 2px rgba(37,99,235,0.18); }
 .rd-page h1 { font-size: 24px; font-weight: 700; text-align: center; margin: 0 0 18px; }
 .rd-page h2 { font-size: 18px; font-weight: 700; margin: 22px 0 10px; }
+.rd-page h3 { font-size: 16px; font-weight: 700; margin: 18px 0 8px; }
 .rd-page p { margin: 0 0 14px; }
+.rd-page blockquote { margin: 0 0 14px; padding: 4px 16px; border-left: 3px solid var(--line); color: var(--text-soft); }
+.rd-page a { color: #2563eb; text-decoration: underline; }
+.rd-page img { max-width: 100%; height: auto; border-radius: 2px; }
+.rd-page hr { border: 0; border-top: 1px solid #c9ced6; margin: 18px 0; }
+.rd-page .rd-tbl { border-collapse: collapse; width: 100%; margin: 12px 0; }
+.rd-page .rd-tbl td, .rd-page .rd-tbl th { border: 1px solid #c9ced6; padding: 6px 9px; min-width: 40px; vertical-align: top; }
+.rd-page.rd-painting { cursor: cell; }
+.rd-sel.ico { max-width: 68px; }
+.rd-color svg { pointer-events: none; }
 .rd-page [data-edit] { background: rgba(37,99,235,0.06); border-radius: 2px; }
 .rd-flash { animation: rdflash 1.2s ease; }
 @keyframes rdflash { 0%, 100% { background: rgba(37,99,235,0.06); } 30% { background: #fde68a; } }
