@@ -24,6 +24,15 @@ jobs:
         run: npm test
       - name: Build cockpit
         run: npm run build -w apps/desktop
+      - name: Install Playwright Chromium
+        run: npx playwright install --with-deps chromium
+      - name: Headless e2e (mocked model, no key) — the behavior contract
+        run: |
+          set -e
+          for t in ui-smoke richdoc-toolbar word-agent-mock word-review-e2e word-docfmt-e2e word-autobatch-e2e word-docx-import-e2e excel-agent-mock; do
+            echo "── $t ──"
+            node "test/$t.mjs"
+          done
 
   real-model-smoke:
     # BYOK end-to-end smoke; runs only when the OtterPatch_API_KEY secret is configured.

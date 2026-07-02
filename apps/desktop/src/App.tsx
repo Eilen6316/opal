@@ -11,6 +11,7 @@ import { LANGS, makeT, TContext, useT, type Lang } from './i18n.js';
 import { DRAWIO_SHAPES } from './drawio-shapes.js';
 import type { UniSel, SheetHandle } from './UniverSheet.js';
 import type { RichDocHandle, DocFmt, WordSel } from './RichDoc.js';
+import { docxToHtml } from './docximport.js';
 import { Markdown } from './Markdown.js';
 import { chartToPngDataUrl, gridToChartSpec, buildChartGrid, specFromInline } from './chart.js';
 
@@ -1263,14 +1264,29 @@ export function App() {
       window.setTimeout(() => { void send('下一批'); }, 900);
     }
   };
-  /** 读入要写回的真实文件(.xlsx/.docx/.pdf/.drawio)为 base64。 */
+  /** 读入要写回的真实文件(.xlsx/.docx/.pdf/.drawio)为 base64;Word 的 .docx 同时解析渲染进工作区(hero 闭环)。 */
   const onFile = (f: File | undefined): void => {
     if (!f) return;
     const reader = new FileReader();
     reader.onload = () => {
       const res = String(reader.result);
-      setFileB64(res.slice(res.indexOf(',') + 1));
+      const b64 = res.slice(res.indexOf(',') + 1);
+      setFileB64(b64);
       setFileName(f.name);
+      if (fmt === 'word' && /\.docx$/i.test(f.name)) {
+        try {
+          const bin = atob(b64);
+          const bytes = new Uint8Array(bin.length);
+          for (let i = 0; i < bin.length; i++) bytes[i] = bin.charCodeAt(i);
+          const r = docxToHtml(bytes);
+          wordRef.current?.loadHTML(r.html);
+          notify(t('已载入并渲染') + ' · ' + f.name + (r.skipped.length ? `(${r.skipped.join('、')}${t('以占位显示')})` : ''));
+          return;
+        } catch (e) {
+          notify(t('已载入(渲染失败,仍可写回)') + ':' + (e instanceof Error ? e.message : String(e)));
+          return;
+        }
+      }
       notify(t('已载入') + ' · ' + f.name);
     };
     reader.readAsDataURL(f);
@@ -1824,6 +1840,7 @@ export function App() {
                     ref={fileRef}
                     type="file"
                     accept=".xlsx,.docx,.pdf,.drawio"
+                    data-role="attach"
                     style={{ display: 'none' }}
                     onChange={(e) => onFile(e.target.files?.[0] ?? undefined)}
                   />

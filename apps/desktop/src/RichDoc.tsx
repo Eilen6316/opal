@@ -66,6 +66,8 @@ export interface RichDocHandle {
   markResolved(cid: string, state: 'accepted' | null): void;
   /** 新提案到达=上一轮撤销窗口关闭:剥 data-undo、清 undoMap,文档回归纯净本体。 */
   closeUndoWindow(): void;
+  /** 载入外部 HTML(真实 docx 导入):替换正文、清空修订/撤销状态并持久化。 */
+  loadHTML(html: string): void;
 }
 /** 上抛给 App 的 Word 选区(与 Excel 的 UniSel 对等,供输入区显示"已选"芯片 + 喂给 Agent 聚焦,含选区格式)。 */
 export interface WordSel { text: string; block: string; chars: number; font?: string; size?: number; bold?: boolean; italic?: boolean; align?: string }
@@ -759,6 +761,15 @@ const RichDoc = forwardRef<RichDocHandle, RichDocProps>(function RichDoc({ onSel
       });
       undoMap.current.clear();
       if (docChgsRef.current.length) { setDocChanges([]); refreshHasDiff(); }
+      persist();
+    },
+    loadHTML: (html) => { // 真实 docx 导入:整篇替换,修订/撤销状态清零
+      const root = edRef.current; if (!root) return;
+      root.innerHTML = html;
+      undoMap.current.clear();
+      setDocChanges([]);
+      refreshHasDiff();
+      refreshNav();
       persist();
     },
   }), []);

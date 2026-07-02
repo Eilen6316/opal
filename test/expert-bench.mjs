@@ -5,9 +5,10 @@
  *   ② LLM-judge:按任务 rubric 给 1-5 分(专业性/洞见/方案质量)。
  * 结果逐行追加到 test/bench-results.jsonl,可比对历史看回归。
  *
- * 运行(需先 npm run build 各包):
- *   OTTERPATCH_BENCH_KEY=sk-ant-... node test/expert-bench.mjs        # 全量
- *   OTTERPATCH_BENCH_KEY=... BENCH_ONLY=w-gongwen node test/expert-bench.mjs  # 单任务
+ * 运行(需先 npm run build 各包;provider 任选,8 家 BYOK 同一套任务):
+ *   OTTERPATCH_BENCH_KEY=sk-ant-... node test/expert-bench.mjs                       # Claude(默认)
+ *   OTTERPATCH_BENCH_KEY=sk-... OTTERPATCH_BENCH_PROVIDER=deepseek BENCH_MODEL=deepseek-chat node test/expert-bench.mjs
+ *   OTTERPATCH_BENCH_KEY=... BENCH_ONLY=w-gongwen node test/expert-bench.mjs         # 单任务
  * 无 key 时直接 SKIP(exit 0),CI 安全。
  */
 import { appendFileSync } from 'node:fs';
@@ -17,9 +18,10 @@ if (!KEY) {
   console.log('SKIP expert-bench: 未设置 OTTERPATCH_BENCH_KEY(需要真实模型)。');
   process.exit(0);
 }
-const { AnthropicModelClient } = await import('@otterpatch/agent');
+const { createModelClient, PROVIDERS } = await import('@otterpatch/agent');
 const { OtterPatchRuntime } = await import('@otterpatch/runtime');
-const MODEL = process.env.BENCH_MODEL || 'claude-opus-4-8';
+const PROVIDER = process.env.OTTERPATCH_BENCH_PROVIDER || 'claude';
+const MODEL = process.env.BENCH_MODEL || PROVIDERS[PROVIDER]?.defaultModel || 'claude-opus-4-8';
 const JUDGE_MODEL = process.env.BENCH_JUDGE_MODEL || MODEL;
 
 // ── 素材 ──
@@ -74,18 +76,29 @@ const TASKS = [
 
 // ── 执行 ──
 const rt = new OtterPatchRuntime();
-const model = new AnthropicModelClient({ apiKey: KEY, model: MODEL });
-const judgeClient = new AnthropicModelClient({ apiKey: KEY, model: JUDGE_MODEL });
+const model = createModelClient(PROVIDER, { apiKey: KEY, model: MODEL });
 
+/** judge 走最小的裸补全调用:claude 用 Anthropic SDK,其余 7 家走 OpenAI 兼容(baseURL 来自 provider 注册表)。 */
 async function judge(task, resultDesc) {
-  // 复用 Anthropic 通道的底层 SDK 太绕,直接走一次最小 messages 调用
-  const { default: Anthropic } = await import('@anthropic-ai/sdk');
-  const c = new Anthropic({ apiKey: KEY });
-  const res = await c.messages.create({
-    model: JUDGE_MODEL, max_tokens: 500,
-    messages: [{ role: 'user', content: `你是 Office Agent 输出的严格评审。任务:「${task.intent}」\n评分标准:${task.rubric}\nAgent 的产出(工具调用轨迹+结果):\n${resultDesc}\n\n只输出 JSON:{"score":1-5,"reason":"一句话"}(5=资深专家水平,3=能用但平庸,1=错误/答非所问)` }],
-  });
-  const txt = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+  const prompt = `你是 Office Agent 输出的严格评审。任务:「${task.intent}」\n评分标准:${task.rubric}\nAgent 的产出(工具调用轨迹+结果):\n${resultDesc}\n\n只输出 JSON:{"score":1-5,"reason":"一句话"}(5=资深专家水平,3=能用但平庸,1=错误/答非所问)`;
+  let txt = '';
+  try {
+    if (PROVIDER === 'claude') {
+      const { default: Anthropic } = await import('@anthropic-ai/sdk');
+      const c = new Anthropic({ apiKey: KEY });
+      const res = await c.messages.create({ model: JUDGE_MODEL, max_tokens: 500, messages: [{ role: 'user', content: prompt }] });
+      txt = res.content.filter((b) => b.type === 'text').map((b) => b.text).join('');
+    } else {
+      const { default: OpenAI } = await import('openai');
+      const c = new OpenAI({ apiKey: KEY, baseURL: PROVIDERS[PROVIDER]?.baseURL });
+      // 思考模型会先花 token 想:给足预算,并兜底从 reasoning_content 里捞 JSON
+      const res = await c.chat.completions.create({ model: JUDGE_MODEL, max_tokens: 2500, messages: [{ role: 'user', content: prompt + '\n(直接输出 JSON,不要输出思考过程)' }] });
+      const msg = res.choices[0]?.message ?? {};
+      txt = msg.content || msg.reasoning_content || '';
+    }
+  } catch (e) {
+    return { score: 0, reason: 'judge 调用失败: ' + e.message };
+  }
   try { const m = /\{[\s\S]*\}/.exec(txt); return m ? JSON.parse(m[0]) : { score: 0, reason: 'judge 无 JSON' }; }
   catch { return { score: 0, reason: 'judge 解析失败' }; }
 }
@@ -119,8 +132,7 @@ for (const task of TASKS) {
   if (!pass) fails++;
   sum += j.score; n++;
   console.log(`  ${pass ? '✓' : '✗'} ${task.id}  kind:${kindOk ? 'ok' : result.kind} tools:${toolsOk ? 'ok' : '缺[' + tools.join(',') + ']'} ops:${opsOk ? 'ok' : 'miss'}  judge:${j.score}/5 —— ${j.reason}`);
-  appendFileSync(new URL('./bench-results.jsonl', import.meta.url), JSON.stringify({ ts: new Date().toISOString(), model: MODEL, task: task.id, kindOk, toolsOk, opsOk, judge: j.score, reason: j.reason }) + '\n');
+  appendFileSync(new URL('./bench-results.jsonl', import.meta.url), JSON.stringify({ ts: new Date().toISOString(), provider: PROVIDER, model: MODEL, task: task.id, kindOk, toolsOk, opsOk, judge: j.score, reason: j.reason }) + '\n');
 }
-console.log(`\nBENCH: ${n} 任务 · 不变量失败 ${fails} · judge 均分 ${(n ? sum / n : 0).toFixed(2)}/5`);
-void judgeClient; // 保留引用位(后续 judge 走通道时切换)
+console.log(`\nBENCH(${PROVIDER}/${MODEL}): ${n} 任务 · 不变量失败 ${fails} · judge 均分 ${(n ? sum / n : 0).toFixed(2)}/5`);
 process.exit(fails ? 1 : 0);

@@ -6,3 +6,4 @@
 export * from './redline.js';
 export * from './document.js';
 export * from './writeback.js';
+export * from './sect.js';
