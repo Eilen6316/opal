@@ -1,0 +1,1044 @@
+/**
+ * DrawioBoard — the entire drawio workspace: toolbar, shape palette, board component
+ * (geometry, orthogonal routing, selection, edge editing) plus the style/stream helpers
+ * the agent bridge uses. Extracted verbatim from App.tsx (decomposition phase 4).
+ */
+/* eslint-disable */
+// NOTE: imports appended below are the minimal set the moved block references.
+
+import { forwardRef, useEffect, useImperativeHandle, useRef, useState } from 'react';
+import type { DragEvent, ReactNode } from 'react';
+import { useT } from './i18n.js';
+import { FUNC_ICONS, IconPlus, IconSearch, IconUndo } from './icons.js';
+import { DRAWIO_SHAPES } from './drawio-shapes.js';
+
+/** Toolbar callback: open a dropdown anchored to the clicked control (mirrors App's ribbon). */
+export type OnOpen = (it: string, el: HTMLElement) => void;
+
+/** drawio 顶部工具栏(仿 next-ai-drawio):单行图标,取代 Office 选项卡式功能区。 */
+const DTOOLS = ['选择', '添加节点', '连线', '文本', '自由绘制', '填充色', '线条', '圆角', '阴影', '形状'];
+export function DrawioToolbar({ onAct }: { onAct: OnOpen }) {
+  const t = useT();
+  return (
+    <div className="dtoolbar">
+      <button className="dtool" title={t('撤销')} onClick={(e) => onAct('撤销', e.currentTarget)}><IconUndo size={16} /></button>
+      <span className="dsep" />
+      {DTOOLS.map((it) => {
+        const Ico = FUNC_ICONS[it];
+        const accent = it === '填充色' ? ' ic-amber' : '';
+        return (
+          <button key={it} className={'dtool' + accent} title={t(it)} onClick={(e) => onAct(it, e.currentTarget)}>
+            {Ico ? <Ico size={16} /> : it.slice(0, 1)}
+          </button>
+        );
+      })}
+      <span className="grow" />
+      <span className="dzoom"><IconSearch size={13} /> 100%</span>
+    </div>
+  );
+}
+
+/** drawio 左侧形状面板(高度还原 jgraph/drawio:可折叠 通用/杂项/高级 + 搜索 + 便笺本 + 更多图形)。 */
+const PAL_CATS: { key: 'general' | 'misc' | 'advanced'; label: string }[] = [
+  { key: 'general', label: '通用' },
+  { key: 'misc', label: '杂项' },
+  { key: 'advanced', label: '高级' },
+];
+
+export function DrawioPalette({ onPick }: { onPick: (s: string) => void }) {
+  const t = useT();
+  const [q, setQ] = useState('');
+  const [open, setOpen] = useState<Record<string, boolean>>({ general: true, misc: false, advanced: true });
+  const query = q.trim();
+  return (
+    <aside className="palette">
+      <div className="pal-search">
+        <IconSearch size={13} />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder={t('搜索形状')} />
+      </div>
+      <div className="pal-cat">
+        <div className="pal-cat-h">{t('便笺本')}</div>
+        <div className="pal-scratch">{t('把元素拖至此处')}</div>
+      </div>
+      {PAL_CATS.map((cat) => {
+        const shapes = DRAWIO_SHAPES[cat.key].filter((s) => !query || s.name.includes(query));
+        const isOpen = query ? shapes.length > 0 : open[cat.key] !== false;
+        if (query && shapes.length === 0) return null;
+        return (
+          <div className="pal-cat" key={cat.key}>
+            <button className="pal-cat-h click" onClick={() => setOpen((o) => ({ ...o, [cat.key]: !(o[cat.key] !== false) }))}>
+              <span className={'tri' + (isOpen ? ' open' : '')}>▸</span> {t(cat.label)}
+              <span className="pal-n">{DRAWIO_SHAPES[cat.key].length}</span>
+            </button>
+            {isOpen && (
+              <div className="pal-grid">
+                {shapes.map((s) => (
+                  <button
+                    key={s.name}
+                    className="pal-shape"
+                    title={s.name}
+                    draggable
+                    onDragStart={(e) => e.dataTransfer.setData('otterpatch/shape', JSON.stringify({ name: s.name, inner: s.inner }))}
+                    onClick={() => onPick(s.name)}
+                  >
+                    <svg viewBox="0 0 40 30" fill="none" stroke="currentColor" strokeWidth={1.4} dangerouslySetInnerHTML={{ __html: s.inner }} />
+                  </button>
+                ))}
+              </div>
+            )}
+          </div>
+        );
+      })}
+      <button className="pal-more"><IconPlus size={13} /> {t('更多图形')}</button>
+    </aside>
+  );
+}
+
+interface XY { x: number; y: number }
+export interface BNode { id: string; x: number; y: number; w: number; h: number; inner: string; label: string; kind?: string; rot?: number; fill?: string; stroke?: string; fontColor?: string; fontSize?: number; bold?: boolean; text?: boolean }
+type ArrowKind = 'classic' | 'open' | 'diamond' | 'circle' | 'none';
+type EdgeStyle = 'ortho' | 'straight';
+export interface BEdge { id: string; from: string; to: string; arrow?: ArrowKind; style?: EdgeStyle; points?: XY[] }
+/** 两节点周界直连(直线线型)。 */
+function straightRoute(a: BNode, b: BNode): XY[] {
+  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+  const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  return [perim(a, bc.x, bc.y), perim(b, ac.x, ac.y)];
+}
+/** 经过显式航点的正交折线:source周界 → 各航点 → target周界,相邻点间插直角拐点。 */
+function routeWaypoints(a: BNode, b: BNode, pts: XY[]): XY[] {
+  const first = pts[0]!;
+  const last = pts[pts.length - 1]!;
+  const all = [perim(a, first.x, first.y), ...pts, perim(b, last.x, last.y)];
+  const out: XY[] = [all[0]!];
+  for (let i = 1; i < all.length; i++) {
+    const c = out[out.length - 1]!;
+    const q = all[i]!;
+    if (Math.abs(c.x - q.x) > 0.5 && Math.abs(c.y - q.y) > 0.5) out.push({ x: q.x, y: c.y });
+    out.push(q);
+  }
+  return out;
+}
+/** 选中边时用于摆放航点/虚拟折点手柄的控制点序列:[源周界, ...航点, 目标周界]。 */
+function controlPoints(a: BNode, b: BNode, pts: XY[]): XY[] {
+  if (pts.length) {
+    const first = pts[0]!;
+    const last = pts[pts.length - 1]!;
+    return [perim(a, first.x, first.y), ...pts, perim(b, last.x, last.y)];
+  }
+  const ac = { x: a.x + a.w / 2, y: a.y + a.h / 2 };
+  const bc = { x: b.x + b.w / 2, y: b.y + b.h / 2 };
+  return [perim(a, bc.x, bc.y), perim(b, ac.x, ac.y)];
+}
+function edgePts(a: BNode, b: BNode, style?: EdgeStyle, points?: XY[]): XY[] {
+  if (points && points.length) return routeWaypoints(a, b, points);
+  return style === 'straight' ? straightRoute(a, b) : ortho(a, b);
+}
+const ARROWS: ArrowKind[] = ['classic', 'open', 'diamond', 'circle', 'none'];
+function arrowGlyph(ak: ArrowKind): ReactNode {
+  const x2 = ak === 'none' ? 18 : 11;
+  const head =
+    ak === 'classic' ? <path d="M10,2 L17,6 L10,10 z" fill="currentColor" /> :
+    ak === 'open' ? <path d="M11,2.5 L17,6 L11,9.5" fill="none" stroke="currentColor" strokeWidth={1.3} /> :
+    ak === 'diamond' ? <path d="M9,6 L13,2.5 L17,6 L13,9.5 z" fill="currentColor" /> :
+    ak === 'circle' ? <circle cx="14" cy="6" r="2.6" fill="currentColor" /> :
+    null;
+  return (
+    <g stroke="currentColor">
+      <line x1={1} y1={6} x2={x2} y2={6} strokeWidth={1.3} />
+      {head}
+    </g>
+  );
+}
+
+const GRID = 10;
+export const snap = (v: number): number => Math.round(v / GRID) * GRID;
+const ndir = (p: XY, q: XY): XY => {
+  const dx = q.x - p.x, dy = q.y - p.y;
+  const l = Math.hypot(dx, dy) || 1;
+  return { x: dx / l, y: dy / l };
+};
+/** 射线从节点中心到目标点,与节点矩形边界的交点(周界连接,箭头贴边)。 */
+function perim(n: BNode, tx: number, ty: number): XY {
+  const cx = n.x + n.w / 2, cy = n.y + n.h / 2;
+  const dx = tx - cx, dy = ty - cy;
+  if (!dx && !dy) return { x: cx, y: cy };
+  const sx = Math.abs(dx) > 0.001 ? n.w / 2 / Math.abs(dx) : Infinity;
+  const sy = Math.abs(dy) > 0.001 ? n.h / 2 / Math.abs(dy) : Infinity;
+  const s = Math.min(sx, sy);
+  return { x: cx + dx * s, y: cy + dy * s };
+}
+/** drawio 风格正交路由:沿主轴从源侧中点出、到目标侧中点入,中段折返。 */
+function ortho(a: BNode, b: BNode): XY[] {
+  const acx = a.x + a.w / 2, acy = a.y + a.h / 2, bcx = b.x + b.w / 2, bcy = b.y + b.h / 2;
+  const dx = bcx - acx, dy = bcy - acy;
+  if (Math.abs(dx) >= Math.abs(dy)) {
+    const right = dx >= 0;
+    // 竖直方向有重叠 → 两端取重叠区中点做共同 y,得到一条干净的水平直线
+    const oy0 = Math.max(a.y, b.y);
+    const oy1 = Math.min(a.y + a.h, b.y + b.h);
+    const yy = oy1 > oy0 + 2 ? (oy0 + oy1) / 2 : null;
+    const p1 = { x: right ? a.x + a.w : a.x, y: yy ?? acy };
+    const p2 = { x: right ? b.x : b.x + b.w, y: yy ?? bcy };
+    if (Math.abs(p1.y - p2.y) < 0.5) return [{ x: p1.x, y: p1.y }, { x: p2.x, y: p1.y }];
+    const mx = (p1.x + p2.x) / 2;
+    return [p1, { x: mx, y: p1.y }, { x: mx, y: p2.y }, p2];
+  }
+  const down = dy >= 0;
+  const ox0 = Math.max(a.x, b.x);
+  const ox1 = Math.min(a.x + a.w, b.x + b.w);
+  const xx = ox1 > ox0 + 2 ? (ox0 + ox1) / 2 : null;
+  const p1 = { x: xx ?? acx, y: down ? a.y + a.h : a.y };
+  const p2 = { x: xx ?? bcx, y: down ? b.y : b.y + b.h };
+  if (Math.abs(p1.x - p2.x) < 0.5) return [{ x: p1.x, y: p1.y }, { x: p1.x, y: p2.y }];
+  const my = (p1.y + p2.y) / 2;
+  return [p1, { x: p1.x, y: my }, { x: p2.x, y: my }, p2];
+}
+function roundedPath(pts: XY[], r = 8): string {
+  if (pts.length < 2) return '';
+  let d = `M ${pts[0]!.x} ${pts[0]!.y}`;
+  for (let i = 1; i < pts.length - 1; i++) {
+    const p = pts[i]!, prev = pts[i - 1]!, next = pts[i + 1]!;
+    const rr = Math.min(r, Math.hypot(prev.x - p.x, prev.y - p.y) / 2, Math.hypot(next.x - p.x, next.y - p.y) / 2);
+    const a = { x: p.x + ndir(p, prev).x * rr, y: p.y + ndir(p, prev).y * rr };
+    const c = { x: p.x + ndir(p, next).x * rr, y: p.y + ndir(p, next).y * rr };
+    d += ` L ${a.x} ${a.y} Q ${p.x} ${p.y} ${c.x} ${c.y}`;
+  }
+  const last = pts[pts.length - 1]!;
+  return d + ` L ${last.x} ${last.y}`;
+}
+export interface BoardSel { count: number; chip: string; context: string }
+/** App ↔ DrawioBoard 命令式句柄:把 Agent 提案的节点/连线落到画板、移除、或高亮某个对象供审阅。 */
+export interface BoardHandle {
+  addObjects(nodes: BNode[], edges: BEdge[]): void;
+  removeObjects(ids: string[]): void;
+  updateObject(id: string, patch: { value?: string; style?: string }): void;
+  moveObject(id: string, box: { x?: number; y?: number; w?: number; h?: number }): void;
+  highlight(id: string): void;
+}
+/** drawio style 串 → 画板节点的线稿 inner SVG(覆盖常见形状,默认矩形)。 */
+export function innerForStyle(style?: string): string {
+  const s = (style ?? '').toLowerCase();
+  if (s.includes('ellipse')) return '<ellipse cx="20" cy="15" rx="16" ry="11"/>';
+  if (s.includes('rhombus')) return '<polygon points="20,3 37,15 20,27 3,15"/>';
+  if (s.includes('hexagon')) return '<polygon points="11,5 29,5 37,15 29,25 11,25 3,15"/>';
+  if (s.includes('cylinder')) return '<ellipse cx="20" cy="7" rx="13" ry="3.5"/><line x1="7" y1="7" x2="7" y2="23"/><line x1="33" y1="7" x2="33" y2="23"/><path d="M7 23 A13 3.5 0 0 0 33 23"/>';
+  if (s.includes('rounded=1') || s.includes('rounded')) return '<rect x="4" y="5" width="32" height="20" rx="4" ry="4"/>';
+  return '<rect x="4" y="5" width="32" height="20"/>';
+}
+/** 解析 drawio style 串 → 画板节点的填充/描边/字体(借鉴 Next AI Drawio 的彩色渲染)。 */
+export function parseDrawioStyle(style?: string): { fill?: string; stroke?: string; fontColor?: string; fontSize?: number; bold?: boolean; text?: boolean } {
+  const s = style ?? '';
+  const get = (k: string): string | undefined => new RegExp(k + '=([^;]+)').exec(s)?.[1]?.trim();
+  const fill = get('fillColor'); const stroke = get('strokeColor'); const fontColor = get('fontColor');
+  const fs = get('fontSize'); const fontStyle = get('fontStyle');
+  const isText = /(?:^|;)\s*text(?:;|$)/.test(s) || s.includes('text;html');
+  return {
+    ...(fill && fill !== 'none' ? { fill } : {}),
+    ...(stroke && stroke !== 'none' ? { stroke } : {}),
+    ...(fontColor ? { fontColor } : {}),
+    ...(fs && Number.isFinite(parseFloat(fs)) ? { fontSize: Math.round(parseFloat(fs)) } : {}),
+    ...(fontStyle && (parseInt(fontStyle, 10) & 1) ? { bold: true } : {}),
+    ...(isText ? { text: true } : {}),
+  };
+}
+export interface RawDrawioOp { op?: string; cellId?: string; value?: string; style?: string; edge?: boolean; source?: string; target?: string; x?: number; y?: number; width?: number; height?: number }
+/** 从【流式中的】propose 入参里抽出已闭合的 op 对象(容忍尾部未完成的 JSON),供"边生成边画"。 */
+export function extractDrawioOps(buf: string): RawDrawioOp[] {
+  const m = /"ops"\s*:\s*\[/.exec(buf);
+  if (!m) return [];
+  let i = m.index + m[0].length;
+  const out: RawDrawioOp[] = [];
+  while (i < buf.length) {
+    while (i < buf.length && /[\s,]/.test(buf[i]!)) i++;
+    if (i >= buf.length || buf[i] !== '{') break;
+    let depth = 0, inStr = false, esc = false, j = i, closed = false;
+    for (; j < buf.length; j++) {
+      const c = buf[j]!;
+      if (esc) { esc = false; continue; }
+      if (c === '\\') { esc = true; continue; }
+      if (c === '"') { inStr = !inStr; continue; }
+      if (inStr) continue;
+      if (c === '{') depth++;
+      else if (c === '}') { depth--; if (depth === 0) { j++; closed = true; break; } }
+    }
+    if (!closed) break;
+    try { out.push(JSON.parse(buf.slice(i, j)) as RawDrawioOp); } catch { break; }
+    i = j;
+  }
+  return out;
+}
+/** 流式画板转换器:把【原始 proposal op】逐个转成画板节点/连线(editId 'e'+index 与 buildChangeSet 对齐)。 */
+export function makeRawBoardConv(seq: number): (op: RawDrawioOp, index: number) => { editId: string; boardId: string; node?: BNode; edge?: BEdge } | null {
+  const idMap = new Map<string, string>();
+  const bid = (orig?: string): string => { const k = orig ?? ('?' + idMap.size); let v = idMap.get(k); if (!v) { v = `g${seq}_${idMap.size + 1}`; idMap.set(k, v); } return v; };
+  let stackY = 60;
+  return (op, index) => {
+    if (op.op !== 'add') return null;
+    if (op.edge || (op.source && op.target)) {
+      const id = bid(op.cellId ?? 'e_' + index);
+      return { editId: 'e' + index, boardId: id, edge: { id, from: bid(op.source), to: bid(op.target), arrow: 'classic', style: 'ortho' } };
+    }
+    const id = bid(op.cellId ?? 'n_' + index);
+    const w = op.width ?? 160; const h = op.height ?? 48;
+    const x = op.x ?? 60; const y = op.y ?? stackY; stackY = Math.max(stackY, y) + h + 40;
+    const st = parseDrawioStyle(op.style);
+    const node: BNode = { id, x: snap(x), y: snap(y), w, h, inner: innerForStyle(op.style), label: String(op.value ?? ''), kind: st.text ? 'text' : 'agent', ...st };
+    return { editId: 'e' + index, boardId: id, node };
+  };
+}
+/** 一组 A1 格的包围区(用于大批量改动时整体聚焦,而非逐格)。 */
+export function boundingA1(ops: { a1: string }[]): string | null {
+  let minC = Infinity, minR = Infinity, maxC = -Infinity, maxR = -Infinity;
+  for (const o of ops) {
+    const m = /([A-Za-z]+)([0-9]+)/.exec(o.a1.replace(/^.*!/, ''));
+    if (!m) continue;
+    let c = 0;
+    for (const ch of m[1]!.toUpperCase()) c = c * 26 + (ch.charCodeAt(0) - 64);
+    const r = parseInt(m[2]!, 10);
+    minC = Math.min(minC, c); maxC = Math.max(maxC, c); minR = Math.min(minR, r); maxR = Math.max(maxR, r);
+  }
+  if (!Number.isFinite(minC)) return null;
+  const col = (n: number): string => { let s = ''; let x = n; while (x > 0) { const r = (x - 1) % 26; s = String.fromCharCode(65 + r) + s; x = Math.floor((x - 1) / 26); } return s; };
+  return `${col(minC)}${minR}:${col(maxC)}${maxR}`;
+}
+const bandRect = (b: { x0: number; y0: number; x1: number; y1: number }): { x: number; y: number; w: number; h: number } => ({
+  x: Math.min(b.x0, b.x1),
+  y: Math.min(b.y0, b.y1),
+  w: Math.abs(b.x1 - b.x0),
+  h: Math.abs(b.y1 - b.y0),
+});
+const intersects = (r: { x: number; y: number; w: number; h: number }, n: BNode): boolean =>
+  !(n.x > r.x + r.w || n.x + n.w < r.x || n.y > r.y + r.h || n.y + n.h < r.y);
+
+function resizeNode(r: { box: BNode; k: string; sx: number; sy: number }, x: number, y: number, shift: boolean): BNode {
+  const b = r.box;
+  const dx = x - r.sx, dy = y - r.sy;
+  let w = b.w + (r.k.includes('e') ? dx : r.k.includes('w') ? -dx : 0);
+  let h = b.h + (r.k.includes('s') ? dy : r.k.includes('n') ? -dy : 0);
+  w = Math.max(40, w);
+  h = Math.max(30, h);
+  if (shift) {
+    const aspect = b.w / b.h || 1;
+    if (r.k.length === 2) {
+      // 角手柄:取位移更大的轴为主,另一轴按比例
+      if (Math.abs(w - b.w) >= Math.abs(h - b.h)) h = w / aspect;
+      else w = h * aspect;
+    } else if (r.k === 'n' || r.k === 's') {
+      w = h * aspect;
+    } else {
+      h = w / aspect;
+    }
+    w = Math.max(40, w);
+    h = Math.max(30, h);
+  }
+  let nx = b.x, ny = b.y;
+  if (r.k.includes('w')) nx = b.x + b.w - w; // 锚定右/对边
+  if (r.k.includes('n')) ny = b.y + b.h - h;
+  return { ...b, x: snap(nx), y: snap(ny), w: snap(w), h: snap(h) };
+}
+const HANDLES: { k: string; fx: number; fy: number }[] = [
+  { k: 'nw', fx: 0, fy: 0 }, { k: 'n', fx: 0.5, fy: 0 }, { k: 'ne', fx: 1, fy: 0 },
+  { k: 'e', fx: 1, fy: 0.5 }, { k: 'se', fx: 1, fy: 1 }, { k: 's', fx: 0.5, fy: 1 },
+  { k: 'sw', fx: 0, fy: 1 }, { k: 'w', fx: 0, fy: 0.5 },
+];
+const PORTS: XY[] = [{ x: 0.5, y: 0 }, { x: 1, y: 0.5 }, { x: 0.5, y: 1 }, { x: 0, y: 0.5 }];
+
+/** 高度复刻 drawio 的交互画板:周界正交圆角连线、悬停连接点拖拽连线(绿色目标高亮)、8 缩放手柄、网格吸附、改名、删边删点、双击空白建节点。 */
+export const DrawioBoard = forwardRef<BoardHandle, { onBoardSel?: (s: BoardSel | null) => void }>(function DrawioBoard({ onBoardSel }, apiRef) {
+  const t = useT();
+  const [nodes, setNodes] = useState<BNode[]>([]);
+  const [edges, setEdges] = useState<BEdge[]>([]);
+  const [selIds, setSelIds] = useState<Set<string>>(new Set());
+  const [selEdge, setSelEdge] = useState<string | null>(null);
+  const [hover, setHover] = useState<string | null>(null);
+  const [hi, setHi] = useState<string | null>(null);
+  useImperativeHandle(apiRef, () => ({
+    addObjects: (nn, ee) => {
+      if (nn.length || ee.length) commit();
+      if (nn.length) setNodes((ns) => [...ns, ...nn]);
+      if (ee.length) setEdges((es) => [...es, ...ee]);
+      setSelIds(new Set(nn.map((n) => n.id)));
+      setSelEdge(null);
+    },
+    removeObjects: (ids) => {
+      const s = new Set(ids);
+      setNodes((ns) => ns.filter((n) => !s.has(n.id)));
+      setEdges((es) => es.filter((ed) => !s.has(ed.id) && !s.has(ed.from) && !s.has(ed.to)));
+    },
+    updateObject: (id, patch) => {
+      commit();
+      setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, ...(patch.value != null ? { label: String(patch.value) } : {}), ...(patch.style ? parseDrawioStyle(patch.style) : {}) } : n)));
+    },
+    moveObject: (id, box) => {
+      commit();
+      setNodes((ns) => ns.map((n) => (n.id === id ? { ...n, ...(box.x != null ? { x: snap(box.x) } : {}), ...(box.y != null ? { y: snap(box.y) } : {}), ...(box.w != null ? { w: box.w } : {}), ...(box.h != null ? { h: box.h } : {}) } : n)));
+    },
+    highlight: (id) => { setHi(id); setSelIds(new Set([id])); setSelEdge(null); },
+  }));
+  const [editing, setEditing] = useState<string | null>(null);
+  const [drag, setDrag] = useState<{ sx: number; sy: number; origins: Record<string, XY> } | null>(null);
+  const [resize, setResize] = useState<{ id: string; k: string; box: BNode; sx: number; sy: number } | null>(null);
+  const [conn, setConn] = useState<{ from: string; x: number; y: number; tgt: string | null } | null>(null);
+  const [band, setBand] = useState<{ x0: number; y0: number; x1: number; y1: number } | null>(null);
+  const [guides, setGuides] = useState<{ v: number[]; h: number[] } | null>(null);
+  const [arrow, setArrow] = useState<{ from: string; dir: 'up' | 'right' | 'down' | 'left'; sx: number; sy: number } | null>(null);
+  const [rotate, setRotate] = useState<{ id: string; cx: number; cy: number } | null>(null);
+  const [panDrag, setPanDrag] = useState<{ sx: number; sy: number; ox: number; oy: number } | null>(null);
+  const [wpDrag, setWpDrag] = useState<{ edgeId: string; index: number } | null>(null);
+  const [epDrag, setEpDrag] = useState<{ edgeId: string; end: 'from' | 'to'; tgt: string | null } | null>(null);
+  const [spaceDown, setSpaceDown] = useState(false);
+  const spaceRef = useRef(false);
+  const clipRef = useRef<BNode[]>([]);
+  const past = useRef<{ nodes: BNode[]; edges: BEdge[] }[]>([]);
+  const future = useRef<{ nodes: BNode[]; edges: BEdge[] }[]>([]);
+  const [zoom, setZoom] = useState(1);
+  const [pan, setPan] = useState<XY>({ x: 0, y: 0 });
+  const ref = useRef<HTMLDivElement | null>(null);
+  const idRef = useRef(0);
+  const cb = useRef(onBoardSel);
+  cb.current = onBoardSel;
+
+  // 选区变化 → 上抛给 App(Agent 感知:选中/框选的节点与连线)
+  // 画板内容 → 上抛给 App。核心:不只是选中,还把【完整拓扑(每个节点 + 连接关系)】给 Agent,
+  // 让 Agent 理解整张流程图的结构,从而能据此驱动修改。
+  useEffect(() => {
+    if (nodes.length === 0 && edges.length === 0) {
+      cb.current?.(null);
+      return;
+    }
+    const nm = (n: BNode): string => n.label || n.kind || '形状';
+    const sn = nodes.filter((n) => selIds.has(n.id));
+    // 关键:把【节点 id】明确给 Agent —— 改/删/移动现有节点时必须用这些 id(否则它会瞎猜 id,改不到)
+    const ctx: string[] = [`[流程图] ${nodes.length} 个节点、${edges.length} 条连线。改/删/移动现有节点时,update/delete/move 的 cellId 必须用下面给出的真实 id。`];
+    if (nodes.length) ctx.push('节点(id=文字): ' + nodes.map((n) => `${n.id}=${nm(n)}`).join('、'));
+    if (edges.length) ctx.push('连接关系(按 id): ' + edges.map((e) => `${e.from}→${e.to}`).join(';'));
+    if (sn.length) ctx.push('当前选中节点 id: ' + sn.map((n) => n.id).join('、') + '(即 ' + sn.map((n) => nm(n)).join('、') + '),用户多半是想改这些。');
+    else if (selEdge) {
+      const e = edges.find((x) => x.id === selEdge);
+      if (e) ctx.push(`当前选中连线: ${e.from}→${e.to}`);
+    }
+    const chip = sn.length
+      ? `画板选中 ${sn.length} 个节点: ${sn.map((n) => nm(n)).join('、')}`
+      : selEdge
+        ? '选中 1 条连线'
+        : `流程图 ${nodes.length} 节点 · ${edges.length} 连线`;
+    cb.current?.({ count: sn.length, chip, context: ctx.join('\n') });
+  }, [selIds, selEdge, nodes, edges]);
+
+  // 屏幕坐标 → 画布坐标(扣除平移/缩放),所有节点/连线都用画布坐标
+  const pt = (e: { clientX: number; clientY: number }): XY => {
+    const r = ref.current?.getBoundingClientRect();
+    return { x: (e.clientX - (r?.left ?? 0) - pan.x) / zoom, y: (e.clientY - (r?.top ?? 0) - pan.y) / zoom };
+  };
+  const nodeAt = (x: number, y: number, not?: string): BNode | undefined =>
+    [...nodes].reverse().find((n) => n.id !== not && x >= n.x && x <= n.x + n.w && y >= n.y && y <= n.y + n.h);
+  const addNode = (x: number, y: number, inner: string, label: string, kind?: string): void => {
+    commit();
+    const id = 'n' + ++idRef.current;
+    setNodes((ns) => [...ns, { id, x: snap(x - 45), y: snap(y - 27), w: 90, h: 54, inner, label, ...(kind ? { kind } : {}) }]);
+    setSelIds(new Set([id]));
+    setSelEdge(null);
+  };
+  // drawio 招牌:点方向箭头 → 克隆源节点放到该方向 60px 外并连上
+  const cloneConnect = (fromId: string, dir: 'up' | 'right' | 'down' | 'left'): void => {
+    const src = nodes.find((n) => n.id === fromId);
+    if (!src) return;
+    commit();
+    const gap = 60;
+    const off = dir === 'up' ? { dx: 0, dy: -(src.h + gap) } : dir === 'down' ? { dx: 0, dy: src.h + gap } : dir === 'left' ? { dx: -(src.w + gap), dy: 0 } : { dx: src.w + gap, dy: 0 };
+    const id = 'n' + ++idRef.current;
+    setNodes((ns) => [...ns, { ...src, id, x: snap(src.x + off.dx), y: snap(src.y + off.dy) }]);
+    setEdges((es) => [...es, { id: 'e' + ++idRef.current, from: fromId, to: id }]);
+    setSelIds(new Set([id]));
+  };
+  const onDrop = (e: DragEvent<HTMLDivElement>): void => {
+    e.preventDefault();
+    const raw = e.dataTransfer.getData('otterpatch/shape');
+    if (!raw) return;
+    const s = JSON.parse(raw) as { name: string; inner: string };
+    const { x, y } = pt(e);
+    addNode(x, y, s.inner, '', s.name); // 拖入的图形不显示中文名,但隐藏存 kind 供 Agent 感知
+  };
+
+  const onMove = (e: { clientX: number; clientY: number; shiftKey?: boolean }): void => {
+    if (panDrag) {
+      setPan({ x: panDrag.ox + (e.clientX - panDrag.sx), y: panDrag.oy + (e.clientY - panDrag.sy) });
+      return;
+    }
+    if (!drag && !conn && !resize && !band && !arrow && !rotate && !wpDrag && !epDrag) return;
+    const { x, y } = pt(e);
+    if (wpDrag) {
+      movedRef.current = true;
+      setEdges((es) => es.map((ed) => (ed.id === wpDrag.edgeId && ed.points ? { ...ed, points: ed.points.map((p, i) => (i === wpDrag.index ? { x: snap(x), y: snap(y) } : p)) } : ed)));
+      return;
+    }
+    if (epDrag) {
+      movedRef.current = true;
+      const tg = nodeAt(x, y);
+      setEpDrag((d) => (d ? { ...d, tgt: tg?.id ?? null } : d));
+      return;
+    }
+    if (rotate) {
+      movedRef.current = true;
+      let deg = (Math.atan2(y - rotate.cy, x - rotate.cx) * 180) / Math.PI + 90;
+      if (e.shiftKey) deg = Math.round(deg / 15) * 15;
+      deg = Math.round(((deg % 360) + 360) % 360);
+      setNodes((ns) => ns.map((n) => (n.id === rotate.id ? { ...n, rot: deg } : n)));
+      return;
+    }
+    if (arrow) {
+      if (Math.hypot(x - arrow.sx, y - arrow.sy) > 5 / zoom) {
+        setConn({ from: arrow.from, x, y, tgt: nodeAt(x, y, arrow.from)?.id ?? null });
+        setArrow(null);
+      }
+      return;
+    }
+    if (drag) {
+      movedRef.current = true;
+      let dx = x - drag.sx;
+      let dy = y - drag.sy;
+      // 对齐参考线:把拖动选区的 左/中/右、上/中/下 吸附到其它节点的同类线
+      const movingIds = new Set(Object.keys(drag.origins));
+      const moved = nodes.filter((n) => movingIds.has(n.id)).map((n) => ({ ...n, x: drag.origins[n.id]!.x + dx, y: drag.origins[n.id]!.y + dy }));
+      if (moved.length) {
+        const bx0 = Math.min(...moved.map((n) => n.x));
+        const bx1 = Math.max(...moved.map((n) => n.x + n.w));
+        const by0 = Math.min(...moved.map((n) => n.y));
+        const by1 = Math.max(...moved.map((n) => n.y + n.h));
+        const myX = [bx0, (bx0 + bx1) / 2, bx1];
+        const myY = [by0, (by0 + by1) / 2, by1];
+        const others = nodes.filter((n) => !movingIds.has(n.id));
+        const tol = 6 / zoom;
+        const gv: number[] = [];
+        const gh: number[] = [];
+        let bestX = Infinity, bestY = Infinity, sxAdj = 0, syAdj = 0;
+        for (const o of others) {
+          for (const ox of [o.x, o.x + o.w / 2, o.x + o.w]) for (const mx of myX) {
+            const d = ox - mx;
+            if (Math.abs(d) <= tol && Math.abs(d) < Math.abs(bestX)) { bestX = d; sxAdj = d; }
+            if (Math.abs(ox - mx) <= tol) gv.push(ox);
+          }
+          for (const oy of [o.y, o.y + o.h / 2, o.y + o.h]) for (const my of myY) {
+            const d = oy - my;
+            if (Math.abs(d) <= tol && Math.abs(d) < Math.abs(bestY)) { bestY = d; syAdj = d; }
+            if (Math.abs(oy - my) <= tol) gh.push(oy);
+          }
+        }
+        if (Number.isFinite(bestX)) dx += sxAdj;
+        if (Number.isFinite(bestY)) dy += syAdj;
+        setGuides(gv.length || gh.length ? { v: [...new Set(gv)], h: [...new Set(gh)] } : null);
+      }
+      setNodes((ns) => ns.map((n) => (drag.origins[n.id] ? { ...n, x: snap(drag.origins[n.id]!.x + dx), y: snap(drag.origins[n.id]!.y + dy) } : n)));
+    }
+    if (resize) {
+      movedRef.current = true;
+      setNodes((ns) => ns.map((n) => (n.id === resize.id ? resizeNode(resize, x, y, e.shiftKey === true) : n)));
+    }
+    if (conn) {
+      movedRef.current = true;
+      const tg = nodeAt(x, y, conn.from);
+      setConn((c) => (c ? { ...c, x, y, tgt: tg?.id ?? null } : c));
+    }
+    if (band) setBand((b) => (b ? { ...b, x1: x, y1: y } : b));
+  };
+  const onUp = (): void => {
+    if (panDrag) {
+      setPanDrag(null);
+      return;
+    }
+    if (epDrag) {
+      if (epDrag.tgt) {
+        const otherEnd = epDrag.end === 'from' ? 'to' : 'from';
+        setEdges((es) => es.map((e) => (e.id === epDrag.edgeId && e[otherEnd] !== epDrag.tgt ? { ...e, [epDrag.end]: epDrag.tgt!, points: undefined } : e)));
+      }
+      if (movedRef.current && preGesture.current) {
+        past.current.push(preGesture.current);
+        if (past.current.length > 80) past.current.shift();
+        future.current = [];
+      }
+      preGesture.current = null;
+      movedRef.current = false;
+      setEpDrag(null);
+      return;
+    }
+    if (arrow) {
+      cloneConnect(arrow.from, arrow.dir);
+      setArrow(null);
+      return;
+    }
+    const madeEdge = !!(conn && conn.tgt);
+    if (conn && conn.tgt) {
+      const to = conn.tgt;
+      setEdges((es) => (es.some((d) => d.from === conn.from && d.to === to) ? es : [...es, { id: 'e' + ++idRef.current, from: conn.from, to }]));
+    }
+    if (band) {
+      const r = bandRect(band);
+      if (r.w > 3 || r.h > 3) setSelIds(new Set(nodes.filter((n) => intersects(r, n)).map((n) => n.id)));
+      setBand(null);
+    }
+    // 手势若真的改动了内容,把开始前的快照压入撤销栈
+    if ((movedRef.current || madeEdge) && preGesture.current) {
+      past.current.push(preGesture.current);
+      if (past.current.length > 80) past.current.shift();
+      future.current = [];
+    }
+    preGesture.current = null;
+    movedRef.current = false;
+    setDrag(null);
+    setConn(null);
+    setResize(null);
+    setGuides(null);
+    setRotate(null);
+    setWpDrag(null);
+  };
+  const capture = (e: { pointerId: number }): void => {
+    try {
+      ref.current?.setPointerCapture(e.pointerId);
+    } catch {
+      /* ignore */
+    }
+  };
+
+  // ── 撤销/重做 + 手势历史 ──
+  const preGesture = useRef<{ nodes: BNode[]; edges: BEdge[] } | null>(null);
+  const movedRef = useRef(false);
+  const arrowNudging = useRef(false);
+  const snapshot = (): { nodes: BNode[]; edges: BEdge[] } => ({ nodes: nodes.map((n) => ({ ...n })), edges: edges.map((e) => ({ ...e })) });
+  const commit = (): void => {
+    past.current.push(snapshot());
+    if (past.current.length > 80) past.current.shift();
+    future.current = [];
+  };
+  const beginGesture = (): void => {
+    preGesture.current = snapshot();
+    movedRef.current = false;
+  };
+  const undo = (): void => {
+    const prev = past.current.pop();
+    if (!prev) return;
+    future.current.push(snapshot());
+    setNodes(prev.nodes);
+    setEdges(prev.edges);
+    setSelIds(new Set());
+    setSelEdge(null);
+  };
+  const redo = (): void => {
+    const next = future.current.pop();
+    if (!next) return;
+    past.current.push(snapshot());
+    setNodes(next.nodes);
+    setEdges(next.edges);
+    setSelIds(new Set());
+    setSelEdge(null);
+  };
+  const duplicate = (offset: number): void => {
+    const sel = nodes.filter((n) => selIds.has(n.id));
+    if (!sel.length) return;
+    commit();
+    const idMap = new Map<string, string>();
+    const clones = sel.map((n) => {
+      const id = 'n' + ++idRef.current;
+      idMap.set(n.id, id);
+      return { ...n, id, x: snap(n.x + offset), y: snap(n.y + offset) };
+    });
+    const newEdges = edges
+      .filter((ed) => idMap.has(ed.from) && idMap.has(ed.to))
+      .map((ed) => ({ ...ed, id: 'e' + ++idRef.current, from: idMap.get(ed.from)!, to: idMap.get(ed.to)! }));
+    setNodes((ns) => [...ns, ...clones]);
+    if (newEdges.length) setEdges((es) => [...es, ...newEdges]);
+    setSelIds(new Set(clones.map((c) => c.id)));
+    setSelEdge(null);
+  };
+
+  useEffect(() => {
+    const k = (e: KeyboardEvent): void => {
+      if (editing) return;
+      const meta = e.ctrlKey || e.metaKey;
+      if (e.code === 'Space' && !meta) {
+        if (!spaceRef.current) {
+          spaceRef.current = true;
+          setSpaceDown(true);
+        }
+        e.preventDefault();
+        return;
+      }
+      if (meta && (e.key === 'z' || e.key === 'Z')) { e.preventDefault(); if (e.shiftKey) redo(); else undo(); return; }
+      if (meta && (e.key === 'y' || e.key === 'Y')) { e.preventDefault(); redo(); return; }
+      if (meta && (e.key === 'a' || e.key === 'A')) { e.preventDefault(); setSelIds(new Set(nodes.map((n) => n.id))); setSelEdge(null); return; }
+      if (meta && (e.key === 'd' || e.key === 'D')) { e.preventDefault(); duplicate(20); return; }
+      if (meta && (e.key === 'c' || e.key === 'C')) { clipRef.current = nodes.filter((n) => selIds.has(n.id)).map((n) => ({ ...n })); return; }
+      if (meta && (e.key === 'v' || e.key === 'V')) {
+        if (!clipRef.current.length) return;
+        e.preventDefault();
+        commit();
+        const clones = clipRef.current.map((n) => ({ ...n, id: 'n' + ++idRef.current, x: snap(n.x + 24), y: snap(n.y + 24) }));
+        setNodes((ns) => [...ns, ...clones]);
+        setSelIds(new Set(clones.map((c) => c.id)));
+        setSelEdge(null);
+        return;
+      }
+      if (e.key === 'Escape') { setSelIds(new Set()); setSelEdge(null); return; }
+      if (e.key === 'Delete' || e.key === 'Backspace') {
+        if (selIds.size) {
+          commit();
+          setNodes((ns) => ns.filter((n) => !selIds.has(n.id)));
+          setEdges((es) => es.filter((ed) => !selIds.has(ed.from) && !selIds.has(ed.to)));
+          setSelIds(new Set());
+        } else if (selEdge) {
+          commit();
+          setEdges((es) => es.filter((ed) => ed.id !== selEdge));
+          setSelEdge(null);
+        }
+        return;
+      }
+      if (e.key.startsWith('Arrow') && selIds.size) {
+        e.preventDefault();
+        const step = e.shiftKey ? GRID : 1;
+        const dx = e.key === 'ArrowLeft' ? -step : e.key === 'ArrowRight' ? step : 0;
+        const dy = e.key === 'ArrowUp' ? -step : e.key === 'ArrowDown' ? step : 0;
+        if (!arrowNudging.current) {
+          commit();
+          arrowNudging.current = true;
+        }
+        setNodes((ns) => ns.map((n) => (selIds.has(n.id) ? { ...n, x: n.x + dx, y: n.y + dy } : n)));
+      }
+    };
+    const up = (e: KeyboardEvent): void => {
+      if (e.code === 'Space') {
+        spaceRef.current = false;
+        setSpaceDown(false);
+      }
+      if (e.key.startsWith('Arrow')) arrowNudging.current = false;
+    };
+    window.addEventListener('keydown', k);
+    window.addEventListener('keyup', up);
+    return () => {
+      window.removeEventListener('keydown', k);
+      window.removeEventListener('keyup', up);
+    };
+  }, [selIds, selEdge, editing, nodes, edges]);
+
+  // Ctrl + 滚轮:朝光标位置缩放画布(光标下的点保持不动)
+  useEffect(() => {
+    const el = ref.current;
+    if (!el) return;
+    const onWheel = (e: WheelEvent): void => {
+      if (!e.ctrlKey) return;
+      e.preventDefault();
+      const r = el.getBoundingClientRect();
+      const mx = e.clientX - r.left;
+      const my = e.clientY - r.top;
+      const nz = Math.min(4, Math.max(0.25, zoom * (e.deltaY < 0 ? 1.12 : 1 / 1.12)));
+      const cx = (mx - pan.x) / zoom;
+      const cy = (my - pan.y) / zoom;
+      setPan({ x: mx - cx * nz, y: my - cy * nz });
+      setZoom(nz);
+    };
+    el.addEventListener('wheel', onWheel, { passive: false });
+    return () => el.removeEventListener('wheel', onWheel);
+  }, [zoom, pan]);
+
+  return (
+    <div
+      className={'drawio-board' + (panDrag ? ' grabbing' : spaceDown ? ' grab' : '')}
+      ref={ref}
+      onDragOver={(e) => e.preventDefault()}
+      onDrop={onDrop}
+      onPointerMove={onMove}
+      onPointerUp={onUp}
+      onPointerDown={(e) => {
+        if (spaceRef.current || e.button === 1) {
+          capture(e);
+          setPanDrag({ sx: e.clientX, sy: e.clientY, ox: pan.x, oy: pan.y });
+          return;
+        }
+        const cl = (e.target as HTMLElement).classList;
+        if (e.target === ref.current || cl.contains('board-svg') || cl.contains('board-canvas')) {
+          setSelIds(new Set());
+          setSelEdge(null);
+          capture(e);
+          const { x, y } = pt(e);
+          setBand({ x0: x, y0: y, x1: x, y1: y });
+        }
+      }}
+      onDoubleClick={(e) => {
+        const cl = (e.target as HTMLElement).classList;
+        if (e.target === ref.current || cl.contains('board-svg') || cl.contains('board-canvas')) {
+          const { x, y } = pt(e);
+          addNode(x, y, '<rect x="4" y="5" width="32" height="20" rx="2"/>', t('文本'));
+        }
+      }}
+    >
+      <div className="board-canvas" style={{ transform: `translate(${pan.x}px, ${pan.y}px) scale(${zoom})` }}>
+      <svg className="board-svg">
+        <defs>
+          <marker id="otterpatch-arr" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke" /></marker>
+          <marker id="otterpatch-arr-sel" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="var(--accent)" /></marker>
+          <marker id="m-classic" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M0,0 L8,4 L0,8 z" fill="context-stroke" /></marker>
+          <marker id="m-open" markerWidth="11" markerHeight="11" refX="8" refY="4" orient="auto"><path d="M1,0.5 L8,4 L1,7.5" fill="none" stroke="context-stroke" strokeWidth="1.4" /></marker>
+          <marker id="m-diamond" markerWidth="13" markerHeight="11" refX="9.5" refY="4" orient="auto"><path d="M0,4 L4.7,0.5 L9.4,4 L4.7,7.5 z" fill="context-stroke" /></marker>
+          <marker id="m-circle" markerWidth="11" markerHeight="11" refX="7.6" refY="4" orient="auto"><circle cx="4" cy="4" r="3" fill="context-stroke" /></marker>
+        </defs>
+        {edges.map((ed) => {
+          const a = nodes.find((n) => n.id === ed.from);
+          const b = nodes.find((n) => n.id === ed.to);
+          if (!a || !b) return null;
+          const pts = edgePts(a, b, ed.style, ed.points);
+          const d = ed.style === 'straight' && !ed.points?.length ? `M ${pts[0]!.x} ${pts[0]!.y} L ${pts[1]!.x} ${pts[1]!.y}` : roundedPath(pts);
+          const on = selEdge === ed.id;
+          const arrow = ed.arrow ?? 'classic';
+          return (
+            <g key={ed.id}>
+              <path d={d} fill="none" stroke="transparent" strokeWidth={12} style={{ pointerEvents: 'stroke', cursor: 'pointer' }} onPointerDown={(e) => { e.stopPropagation(); setSelEdge(ed.id); setSelIds(new Set()); }} />
+              <path d={d} fill="none" stroke={on ? 'var(--accent)' : '#5f6673'} strokeWidth={on ? 2 : 1.5} markerEnd={arrow === 'none' ? undefined : `url(#m-${arrow})`} style={{ pointerEvents: 'none' }} />
+            </g>
+          );
+        })}
+        {/* 选中边的手柄(端点/航点/虚拟折点)移到节点之上的覆盖层 board-overlay,避免被节点 div 遮挡 */}
+        {conn
+          ? (() => {
+              const a = nodes.find((n) => n.id === conn.from);
+              if (!a) return null;
+              const tgt = conn.tgt ? nodes.find((n) => n.id === conn.tgt) : null;
+              if (tgt) return <path d={roundedPath(ortho(a, tgt))} fill="none" stroke="#16a34a" strokeWidth={2} strokeDasharray="6 3" markerEnd="url(#otterpatch-arr-sel)" />;
+              const p1 = perim(a, conn.x, conn.y);
+              return <line x1={p1.x} y1={p1.y} x2={conn.x} y2={conn.y} stroke="var(--accent)" strokeWidth={1.6} strokeDasharray="5 3" markerEnd="url(#otterpatch-arr-sel)" />;
+            })()
+          : null}
+        {guides ? (
+          <g stroke="#ff5a5a" strokeWidth={1} strokeDasharray="4 4" vectorEffect="non-scaling-stroke" style={{ pointerEvents: 'none' }}>
+            {guides.v.map((vx, i) => (
+              <line key={'v' + i} x1={vx} y1={0} x2={vx} y2={6000} />
+            ))}
+            {guides.h.map((hy, i) => (
+              <line key={'h' + i} x1={0} y1={hy} x2={6000} y2={hy} />
+            ))}
+          </g>
+        ) : null}
+      </svg>
+
+      {nodes.map((n) => {
+        const isSel = selIds.has(n.id);
+        const isHover = hover === n.id;
+        const isTgt = conn?.tgt === n.id || epDrag?.tgt === n.id;
+        return (
+          <div
+            key={n.id}
+            className={'bnode' + (isSel ? ' sel' : '') + (isHover && !isSel ? ' hover' : '') + (isTgt ? ' tgt' : '') + (n.id === hi ? ' hi' : '')}
+            style={{ left: n.x, top: n.y, width: n.w, height: n.h, ...(n.rot ? { transform: `rotate(${n.rot}deg)` } : {}) }}
+            onPointerEnter={() => setHover(n.id)}
+            onPointerLeave={() => setHover((h) => (h === n.id ? null : h))}
+            onPointerDown={(e) => {
+              e.stopPropagation();
+              capture(e);
+              beginGesture();
+              const ids = e.shiftKey ? new Set(selIds).add(n.id) : selIds.has(n.id) ? selIds : new Set([n.id]);
+              setSelIds(ids);
+              setSelEdge(null);
+              const { x, y } = pt(e);
+              const origins: Record<string, XY> = {};
+              nodes.forEach((nd) => {
+                if (ids.has(nd.id)) origins[nd.id] = { x: nd.x, y: nd.y };
+              });
+              setDrag({ sx: x, sy: y, origins });
+            }}
+            onDoubleClick={(e) => {
+              e.stopPropagation();
+              setEditing(n.id);
+            }}
+          >
+            {n.text ? null : n.fill || n.stroke || n.kind === 'agent' ? (
+              <div className="bnode-box" style={{ background: n.fill ?? '#ffffff', borderColor: n.stroke ?? '#9aa3b2' }} />
+            ) : (
+              <svg viewBox="3 3 34 24" preserveAspectRatio="none" fill="none" stroke="#3a3f4b" strokeWidth={0.9} dangerouslySetInnerHTML={{ __html: n.inner }} />
+            )}
+            {editing === n.id ? (
+              <input
+                className="bnode-edit"
+                autoFocus
+                defaultValue={n.label}
+                onBlur={(e) => {
+                  const v = e.target.value;
+                  setNodes((ns) => ns.map((m) => (m.id === n.id ? { ...m, label: v } : m)));
+                  setEditing(null);
+                }}
+                onKeyDown={(e) => {
+                  if (e.key === 'Enter') (e.target as HTMLInputElement).blur();
+                }}
+                onPointerDown={(e) => e.stopPropagation()}
+              />
+            ) : (
+              <span className={'bnode-label' + (n.text ? ' txt' : '')} style={{ ...(n.fontColor ? { color: n.fontColor } : {}), ...(n.fontSize ? { fontSize: n.fontSize } : {}), ...(n.bold ? { fontWeight: 700 } : {}) }}>{n.label}</span>
+            )}
+            {(isHover || isSel) && !drag && !resize
+              ? PORTS.map((p, i) => (
+                  <span
+                    key={i}
+                    className="bport"
+                    style={{ left: `${p.x * 100}%`, top: `${p.y * 100}%` }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      capture(e);
+                      beginGesture();
+                      const { x, y } = pt(e);
+                      setConn({ from: n.id, x, y, tgt: null });
+                    }}
+                  />
+                ))
+              : null}
+            {isSel && selIds.size === 1
+              ? HANDLES.map((h) => (
+                  <span
+                    key={h.k}
+                    className={'bhandle h-' + h.k}
+                    style={{ left: `${h.fx * 100}%`, top: `${h.fy * 100}%` }}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      capture(e);
+                      beginGesture();
+                      const { x, y } = pt(e);
+                      setResize({ id: n.id, k: h.k, box: n, sx: x, sy: y });
+                    }}
+                  />
+                ))
+              : null}
+            {isSel && selIds.size === 1 ? (
+              <span
+                className="brot"
+                title={t('拖动旋转,按住 Shift 吸附 15°')}
+                onPointerDown={(e) => {
+                  e.stopPropagation();
+                  capture(e);
+                  beginGesture();
+                  setRotate({ id: n.id, cx: n.x + n.w / 2, cy: n.y + n.h / 2 });
+                }}
+              >
+                ↻
+              </span>
+            ) : null}
+            {isHover && selIds.size <= 1 && !drag && !resize && !conn && !band && !rotate
+              ? (['up', 'right', 'down', 'left'] as const).map((dir) => (
+                  <span
+                    key={dir}
+                    className={'barrow ba-' + dir}
+                    title={t('点=克隆并连接,拖=连线')}
+                    onPointerDown={(e) => {
+                      e.stopPropagation();
+                      capture(e);
+                      beginGesture();
+                      const { x, y } = pt(e);
+                      setArrow({ from: n.id, dir, sx: x, sy: y });
+                    }}
+                  />
+                ))
+              : null}
+          </div>
+        );
+      })}
+      <svg className="board-svg board-overlay">
+        {selEdge
+          ? (() => {
+              const ed = edges.find((x) => x.id === selEdge);
+              const a = ed && nodes.find((n) => n.id === ed.from);
+              const b = ed && nodes.find((n) => n.id === ed.to);
+              if (!ed || !a || !b) return null;
+              const pts = edgePts(a, b, ed.style, ed.points);
+              const s = pts[0]!;
+              const e2 = pts[pts.length - 1]!;
+              const wps = ed.points ?? [];
+              const ctrl = controlPoints(a, b, wps);
+              const removeWp = (i: number): void => {
+                commit();
+                setEdges((es) => es.map((x) => (x.id === ed.id ? { ...x, points: wps.length > 1 ? wps.filter((_, k) => k !== i) : undefined } : x)));
+              };
+              const addWpAt = (segIdx: number, p: XY, e: { stopPropagation: () => void; pointerId: number }): void => {
+                e.stopPropagation();
+                capture(e);
+                beginGesture();
+                movedRef.current = true;
+                const np = [...wps];
+                np.splice(segIdx, 0, { x: snap(p.x), y: snap(p.y) });
+                setEdges((es) => es.map((x) => (x.id === ed.id ? { ...x, points: np } : x)));
+                setWpDrag({ edgeId: ed.id, index: segIdx });
+              };
+              const epStart = (end: 'from' | 'to', e: { stopPropagation: () => void; pointerId: number }): void => {
+                e.stopPropagation();
+                capture(e);
+                beginGesture();
+                setEpDrag({ edgeId: ed.id, end, tgt: null });
+              };
+              return (
+                <g>
+                  <g style={{ cursor: 'pointer', pointerEvents: 'all' }} onPointerDown={(e) => epStart('from', e)}>
+                    <circle cx={s.x} cy={s.y} r={9} fill="transparent" />
+                    <circle cx={s.x} cy={s.y} r={5} fill="#fff" stroke="var(--accent)" strokeWidth={2} />
+                  </g>
+                  <g style={{ cursor: 'pointer', pointerEvents: 'all' }} transform={`translate(${e2.x},${e2.y})`} onPointerDown={(e) => epStart('to', e)}>
+                    <circle r={10} fill="transparent" />
+                    <circle r={6} fill="#fff" stroke="#00c853" strokeWidth={1.5} />
+                    <line x1={-3.4} y1={-3.4} x2={3.4} y2={3.4} stroke="#00c853" strokeWidth={2.2} strokeLinecap="round" />
+                    <line x1={3.4} y1={-3.4} x2={-3.4} y2={3.4} stroke="#00c853" strokeWidth={2.2} strokeLinecap="round" />
+                  </g>
+                  {ctrl.slice(0, -1).map((c, i) => {
+                    const q = ctrl[i + 1]!;
+                    const mid = { x: (c.x + q.x) / 2, y: (c.y + q.y) / 2 };
+                    return (
+                      <g key={'vb' + i} style={{ cursor: 'crosshair', pointerEvents: 'all' }} onPointerDown={(e) => addWpAt(i, mid, e)}>
+                        <circle cx={mid.x} cy={mid.y} r={10} fill="transparent" />
+                        <circle cx={mid.x} cy={mid.y} r={4.5} fill="var(--accent)" fillOpacity={0.18} stroke="var(--accent)" strokeOpacity={0.65} strokeWidth={1.2} />
+                      </g>
+                    );
+                  })}
+                  {wps.map((p, i) => (
+                    <circle
+                      key={'wp' + i}
+                      cx={p.x}
+                      cy={p.y}
+                      r={5}
+                      fill="var(--accent)"
+                      stroke="#fff"
+                      strokeWidth={1.6}
+                      style={{ cursor: 'move', pointerEvents: 'all' }}
+                      onPointerDown={(e) => { e.stopPropagation(); capture(e); beginGesture(); setWpDrag({ edgeId: ed.id, index: i }); }}
+                      onDoubleClick={(e) => { e.stopPropagation(); removeWp(i); }}
+                    />
+                  ))}
+                </g>
+              );
+            })()
+          : null}
+      </svg>
+      {band ? (() => { const r = bandRect(band); return <div className="band" style={{ left: r.x, top: r.y, width: r.w, height: r.h }} />; })() : null}
+      </div>
+      {selEdge
+        ? (() => {
+            const ed = edges.find((x) => x.id === selEdge);
+            const a = ed && nodes.find((n) => n.id === ed.from);
+            const b = ed && nodes.find((n) => n.id === ed.to);
+            if (!ed || !a || !b) return null;
+            const pts = edgePts(a, b, ed.style, ed.points);
+            const mid = pts[Math.floor(pts.length / 2)] ?? pts[0]!;
+            const setEdge = (patch: Partial<BEdge>): void => {
+              commit();
+              setEdges((es) => es.map((x) => (x.id === ed.id ? { ...x, ...patch } : x)));
+            };
+            return (
+              <div className="etoolbar" style={{ left: mid.x * zoom + pan.x, top: mid.y * zoom + pan.y - 44 }} onPointerDown={(e) => e.stopPropagation()}>
+                <button className={'etb' + (ed.style !== 'straight' ? ' on' : '')} title={t('正交')} onClick={() => setEdge({ style: 'ortho' })}>⌐</button>
+                <button className={'etb' + (ed.style === 'straight' ? ' on' : '')} title={t('直线')} onClick={() => setEdge({ style: 'straight' })}>╱</button>
+                <span className="etb-sep" />
+                {ARROWS.map((ak) => (
+                  <button key={ak} className={'etb' + ((ed.arrow ?? 'classic') === ak ? ' on' : '')} title={t('箭头') + ' ' + ak} onClick={() => setEdge({ arrow: ak })}>
+                    <svg width="20" height="12" viewBox="0 0 20 12">{arrowGlyph(ak)}</svg>
+                  </button>
+                ))}
+              </div>
+            );
+          })()
+        : null}
+      {nodes.length === 0 && <div className="board-hint">{t('从左侧拖拽形状到画板,或双击空白处新建;拖节点边缘圆点连线;框选多选;Ctrl+滚轮缩放')}</div>}
+      <div className="board-zoom">{Math.round(zoom * 100)}%</div>
+    </div>
+  );
+});
