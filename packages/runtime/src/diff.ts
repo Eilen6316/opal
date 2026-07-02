@@ -16,8 +16,12 @@ export interface OtterPatchDiffItem {
   style?: AbstractStyle; // Structured style for formatting changes (highlight/bold/font color/number format), applied directly by the frontend
 }
 
+const BLOCK_NAME: Record<string, string> = { h1: '标题1', h2: '标题2', h3: '标题3', p: '正文', blockquote: '引用' };
+const ALIGN_NAME: Record<string, string> = { left: '左对齐', center: '居中', right: '右对齐', justify: '两端对齐' };
+const MARGIN_NAME: Record<string, string> = { narrow: '窄', normal: '常规', moderate: '适中', wide: '宽' };
 function styleSummary(s: AbstractStyle): string {
   const parts: string[] = [];
+  if (s.block) parts.push('段落样式 ' + (BLOCK_NAME[s.block] ?? s.block));
   if (s.font) parts.push('字体 ' + s.font);
   if (s.size) parts.push('字号 ' + s.size);
   if (s.bgColor) parts.push('填充 ' + s.bgColor);
@@ -25,7 +29,11 @@ function styleSummary(s: AbstractStyle): string {
   if (s.bold) parts.push('加粗');
   if (s.italic) parts.push('斜体');
   if (s.underline) parts.push('下划线');
-  if (s.align) parts.push('对齐 ' + s.align);
+  if (s.align) parts.push(ALIGN_NAME[s.align] ?? '对齐 ' + s.align);
+  if (s.lineSpacing) parts.push('行距 ' + s.lineSpacing);
+  if (s.columns != null) parts.push(s.columns <= 1 ? '单栏' : s.columns + ' 栏');
+  if (s.margin) parts.push((MARGIN_NAME[s.margin] ?? s.margin) + '边距');
+  if (s.orient) parts.push(s.orient === 'landscape' ? '横向纸张' : '纵向纸张');
   if (s.numberFormat) parts.push('数字格式 ' + s.numberFormat);
   return parts.join(' · ') || '套用格式';
 }
@@ -45,7 +53,7 @@ function refOf(a: LogicalAnchor | undefined, fallback: string): string {
     case 'object':
       return p.elementId;
     case 'flow':
-      return p.quote.text.slice(0, 24);
+      return p.quote.text ? p.quote.text.slice(0, 24) : p.path[0] != null ? `第${p.path[0] + 1}段` : fallback;
     case 'composite':
       return 'composite';
   }
@@ -62,7 +70,7 @@ function describe(op: EditOp): { badge: DiffBadge; label: string; after?: string
     case 'insertText':
       return { badge: 'add', label: `insert text (${op.at})`, after: op.text };
     case 'deleteRange':
-      return { badge: 'remove', label: 'delete range' };
+      return { badge: 'remove', label: '删除该段/该区域' };
     case 'setStyle':
       return { badge: 'modify', label: styleSummary(op.style), style: op.style, after: styleSummary(op.style) };
     case 'setNumberFormat':
