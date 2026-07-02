@@ -16,6 +16,7 @@ import { akey, BATCH_RX, AUTO_BATCH_CAP } from './review-shared.js';
 import { ReviewBox } from './ReviewBox.js';
 import { AgentHome } from './AgentHome.js';
 import { Composer } from './Composer.js';
+import { TopBar } from './TopBar.js';
 import { Markdown } from './Markdown.js';
 import { chartToPngDataUrl, gridToChartSpec, buildChartGrid, specFromInline } from './chart.js';
 
@@ -1408,38 +1409,14 @@ export function App() {
   return (
     <TContext.Provider value={t}>
       <div className="app">
-        <header className="topbar">
-          <div className="brand">
-            <img className="brand-logo" src="/logo.png" alt="OtterPatch" />
-            <span className="sub">{t('safe-commit layer')}</span>
-          </div>
-          <div className="fmttabs">
-            {FORMATS.map((f) => (
-              <button
-                key={f.id}
-                className={'fmttab' + (f.id === fmt ? ' on' : '')}
-                onClick={() => {
-                  setFmt(f.id);
-                  lsSet('oa.fmt', f.id);
-                  setTab(0);
-                }}
-              >
-                {t(f.label)}
-              </button>
-            ))}
-          </div>
-          <div className="file">
-            <span className="name">{t(curFmt.file)}</span>
-            <span className="saved">{t('已保存')}</span>
-          </div>
-          <div className="grow" />
-          <select className="langsel" value={lang} onChange={(e) => pickLang(e.target.value as Lang)} title="Language">
-            {LANGS.map((l) => (
-              <option key={l.id} value={l.id}>{l.label}</option>
-            ))}
-          </select>
-          <button className="icon-ghost" title={t('更多')}><IconDots size={18} /></button>
-        </header>
+        <TopBar
+          formats={FORMATS}
+          fmt={fmt}
+          fileLabel={curFmt.file}
+          lang={lang}
+          onPickFormat={(id) => { setFmt(id as typeof fmt); lsSet('oa.fmt', id); setTab(0); }}
+          onPickLang={pickLang}
+        />
 
         <main className={'body' + (fmt === 'drawio' ? ' three' : '')}>
           {fmt === 'drawio' && <DrawioPalette onPick={(s) => notify(t('插入形状') + ' · ' + s)} />}
