@@ -72,6 +72,38 @@ const TASKS = [
   { id: 'x-ambiguous', format: 'excel', intent: '把这张表做成一个报告', context: sheetCtx, sheet: SHEET,
     expect: { kind: 'clarify' },
     rubric: '产出形态未指定时是否先澄清(报告形式/口径/放哪),候选是否具体可选。' },
+
+  // ── 多轮场景(history 驱动):澄清后落地 / 分批不重复 / 追改锚新文 / 撤销后回原文 ──
+  { id: 'mt-clarify-then-do', format: 'word', intent: '我的选择如下,请据此继续:\n- 处理方向:排版规范化', context: docCtx(), doc: DOC,
+    history: [
+      { role: 'user', content: '帮我弄一下这个文档' },
+      { role: 'assistant', content: '我向你澄清提问: 你想优先处理哪个方向?(候选: 排版规范化/文字润色/结构理顺/先做诊断)(等待你的回答)' },
+    ],
+    expect: { kind: 'changeset' },
+    rubric: '上一轮已澄清、用户已作答:本轮【不得】再问,应直接落地排版规范化;方案是否覆盖假标题转真样式与正文基线统一。' },
+  { id: 'mt-next-batch', format: 'word', intent: '下一批', context: docCtx(), doc: DOC,
+    history: [
+      { role: 'user', content: '把全文排版规范化,可以分批' },
+      { role: 'assistant', content: '提出改动: 第3段 假标题"三、下一步安排"套真标题样式; 全文 正文统一宋体12pt(用户已接受并写入2处)' },
+    ],
+    expect: { kind: 'changeset' },
+    rubric: '续批是否【不重复】上一批已写入的两处(假标题/全文字体),而是做剩余项(如第1段字号规范、标点/空格、行距);plan 是否说明这是第二批。' },
+  { id: 'mt-followup-refine', format: 'word', intent: '把你刚才改过的那句话再精简一点', context: docCtx().replace('尽快推进试运行准备工作,确保按期上线。', '加快试运行准备,确保按期如期完成上线目标。'),
+    doc: { blocks: DOC.blocks.map((b, i) => (i === 3 ? { ...b, text: '加快试运行准备,确保按期如期完成上线目标。' } : b)) },
+    history: [
+      { role: 'user', content: '把第4段那句话改得更有力' },
+      { role: 'assistant', content: '提出改动: 正文 "尽快推进试运行准备工作,确保按期上线。"→"加快试运行准备,确保按期如期完成上线目标。"(用户已接受并写入1处)' },
+    ],
+    expect: { kind: 'changeset', opsMust: [/加快试运行准备/] },
+    rubric: '追改必须锚定在【改后的新句】上(quote 含"加快试运行准备"),不能引用已被替换的旧句;新 replacement 是否更精简(如修掉"按期如期"的语义重复)。' },
+  { id: 'mt-reverted', format: 'word', intent: '刚才那版撤销了,换个轻一点的思路:把第4段这句话精简一些但保留原意', context: docCtx(),
+    doc: DOC,
+    history: [
+      { role: 'user', content: '把第4段那句话改得更有力' },
+      { role: 'assistant', content: '提出改动: 正文 "尽快推进试运行准备工作,确保按期上线。"→"加快试运行准备,确保按期如期完成上线目标。"(用户已撤销这些改动,文档未保留它们)' },
+    ],
+    expect: { kind: 'changeset', opsMust: [/尽快推进试运行准备工作/] },
+    rubric: '上一轮改动已撤销:quote 必须锚定【原句】("尽快推进试运行准备工作…"),不得把已撤销的版本当作现存文本引用。' },
 ];
 
 // ── 执行 ──
@@ -112,14 +144,15 @@ for (const task of TASKS) {
   try {
     result = await rt.respondStream(
       { hostId: 'bench', format: task.format, intent: task.intent, baseRev: 0, anchors: [], context: task.context,
-        ...(task.sheet ? { sheet: task.sheet } : {}), ...(task.doc ? { doc: task.doc } : {}) },
+        ...(task.sheet ? { sheet: task.sheet } : {}), ...(task.doc ? { doc: task.doc } : {}), ...(task.history ? { history: task.history } : {}) },
       model,
       (e) => { if (e.type === 'tool') tools.push(e.name); },
     );
   } catch (e) {
     console.log(`  ✗ ${task.id} 请求失败: ${e.message}`); fails++; continue;
   }
-  const ops = result.kind === 'changeset' ? JSON.stringify(result.changeSet.edits) : '';
+  // Include anchors: quote anchors live in changeSet.anchors, not in edits — opsMust patterns often target the quote (R4 false negative on mt-reverted).
+  const ops = result.kind === 'changeset' ? JSON.stringify({ edits: result.changeSet.edits, anchors: result.changeSet.anchors }) : '';
   const kindOk = result.kind === task.expect.kind;
   const toolsOk = (task.expect.mustTools ?? []).every((t) => tools.includes(t))
     && (!task.expect.mustToolsAny || task.expect.mustToolsAny.some((t) => tools.includes(t)));

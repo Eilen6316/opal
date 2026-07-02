@@ -29,8 +29,20 @@ export interface PartRef {
   hostId: string;
   sub?: string;
 } // sheet / slide;Word 恒单文档流
-export type ProjectionQuery = unknown;
-export type DocProjection = unknown;
+
+/** Read-only structured projection request. The envelope is the cross-adapter contract;
+ *  `args` carries host-specific parameters (kept opaque on purpose — payloads differ per host). */
+export interface ProjectionQuery {
+  kind: string; // e.g. 'outline' | 'style-usage' | 'grid-window'
+  scope?: PartRef;
+  args?: Readonly<Record<string, unknown>>;
+}
+/** Projection result envelope: typed identity + revision, host-shaped payload. */
+export interface DocProjection {
+  kind: string;
+  rev?: DocRev;
+  data: unknown; // host-shaped payload, matched to `kind` by the caller
+}
 export interface OverlayPort {
   mount(d: unknown): { dispose(): void };
 }
@@ -75,22 +87,45 @@ export interface CapabilityNegotiator {
   };
 }
 
-/** 每个底座实现一个。这是抽象层与底座之间唯一的接口。 */
+/**
+ * Adapter tiers — honest contract instead of one heavyweight interface:
+ *  - `HostAdapter` (required core): identity + capability negotiation + anchors + edit engine
+ *    + write-back. This is what the propose→diff→commit pipeline actually exercises.
+ *  - Optional capability interfaces below: implement only what the host really supports,
+ *    discover at runtime via the `has*` guards. A format may also ship as a bare
+ *    `WritebackBackend` only (pdf/pptx today) and skip HostAdapter entirely — that tier is
+ *    registered on the runtime's backend table, not in the adapter registry.
+ */
 export interface HostAdapter {
   readonly hostId: string;
   readonly meta: HostMeta;
   capabilities(): CapabilitySet;
   anchors(): AnchorService;
   changes(): ChangeSetEngine;
-  project(q: ProjectionQuery): Promise<DocProjection>;
   writebacks(): readonly WritebackBackend[];
-  overlay(): OverlayPort;
-  createShadow(scope: PartRef): Promise<ShadowDoc>;
-  observeMutations(
-    scope: PartRef,
-    cb: (log: MutationLog, rev: DocRev) => void,
-  ): Unsubscribe;
-  rev(scope: PartRef): DocRev;
-  onAdvance(cb: (rev: DocRev) => void): Unsubscribe;
   dispose(): void;
 }
+
+/** Optional: read-only structured projections of the document (outlines, style usage, windows). */
+export interface ProjectionCapability {
+  project(q: ProjectionQuery): Promise<DocProjection>;
+}
+/** Optional: fork a shadow snapshot for verify/preview without touching the live document. */
+export interface ShadowCapability {
+  createShadow(scope: PartRef): Promise<ShadowDoc>;
+}
+/** Optional: live-document integration — revision tracking + mutation feed for anchor rebase. */
+export interface LiveDocCapability {
+  rev(scope: PartRef): DocRev;
+  onAdvance(cb: (rev: DocRev) => void): Unsubscribe;
+  observeMutations(scope: PartRef, cb: (log: MutationLog, rev: DocRev) => void): Unsubscribe;
+}
+/** Optional: pixel overlay port (selection lasso / diff highlights) over the host's canvas. */
+export interface OverlayCapability {
+  overlay(): OverlayPort;
+}
+
+export const hasProjection = (a: HostAdapter): a is HostAdapter & ProjectionCapability => 'project' in a;
+export const hasShadow = (a: HostAdapter): a is HostAdapter & ShadowCapability => 'createShadow' in a;
+export const hasLiveDoc = (a: HostAdapter): a is HostAdapter & LiveDocCapability => 'observeMutations' in a;
+export const hasOverlay = (a: HostAdapter): a is HostAdapter & OverlayCapability => 'overlay' in a;

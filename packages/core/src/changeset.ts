@@ -143,12 +143,16 @@ export interface ShadowResult {
   capturedInverse: Record<EditId, EditOp>;
   effects: EffectPreview;
 }
+/** Host-specific shadow snapshot the engine applies edits to. Opaque to core BY DESIGN —
+ *  adapters narrow it through the `ChangeSetEngine<TShadow>` generic (e.g. `GridShadow` for
+ *  spreadsheets) instead of casting from a bare unknown at every use site. */
 export type ShadowDoc = unknown;
 
-/** 每个适配器实现 —— 校验/影子/反演/rebase。不直接碰 live 文档。 */
-export interface ChangeSetEngine {
+/** Implemented per adapter — validate / shadow-apply / invert / rebase. Never touches the live doc.
+ *  `TShadow` is the adapter's own snapshot type; it defaults to the opaque `ShadowDoc`. */
+export interface ChangeSetEngine<TShadow = ShadowDoc> {
   validate(cs: ChangeSet, caps: CapabilitySet): ValidationReport;
-  shadowApply(cs: ChangeSet, shadow: ShadowDoc): Promise<ShadowResult>;
+  shadowApply(cs: ChangeSet, shadow: TShadow): Promise<ShadowResult>;
   invert(cs: ChangeSet, applied: ShadowResult): ChangeSet;
   rebase(
     cs: ChangeSet,

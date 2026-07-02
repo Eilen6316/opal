@@ -10,7 +10,7 @@ import OpenAI from 'openai';
 import type { ChangeSet } from '@otterpatch/core';
 import type { AgentResponse, HostDialect, ModelClient, ProposeRequest, RespondOptions, StreamEvent } from './model.js';
 import { STEP_LIMIT, TOO_MANY_STEPS_MSG, auxToolDefs, execReadTool, parseClarify, recentHistory, respondSystem } from './sheet-tools.js';
-import { NUDGE_DIRECT, EMPTY_RESULT_FALLBACK, TRUNCATED_FALLBACK } from './prompts/index.js';
+import { NUDGE_DIRECT, NUDGE_TOOLIFY, EMPTY_RESULT_FALLBACK, TRUNCATED_FALLBACK } from './prompts/index.js';
 import { salvageProposalArgs, salvageText, safeParse } from './json-salvage.js';
 
 export interface OpenAICompatOptions {
@@ -142,8 +142,10 @@ export class OpenAICompatModelClient implements ModelClient {
       if (!msg) return { kind: 'answer', text: '(模型无响应)' };
       const calls = (msg.tool_calls ?? []).filter((c) => c.type === 'function');
       if (!calls.length) {
+        // No tool call: empty text → nudge for a result; prose final → toolify it once
+        // ("prose proposal" failure mode: plan/clarify written as raw text).
         const txt = (msg.content ?? '').trim();
-        if (!txt && !nudged) { nudged = true; messages.push({ role: 'assistant', content: '(已完成思考)' }); messages.push({ role: 'user', content: NUDGE_DIRECT }); continue; }
+        if (!nudged) { nudged = true; messages.push({ role: 'assistant', content: txt || '(已完成思考)' }); messages.push({ role: 'user', content: txt ? NUDGE_TOOLIFY : NUDGE_DIRECT }); continue; }
         return { kind: 'answer', text: txt || EMPTY_RESULT_FALLBACK };
       }
 
@@ -251,7 +253,8 @@ export class OpenAICompatModelClient implements ModelClient {
         return result;
       }
       if (!calls.length) {
-        if (!content.trim() && !nudged) { nudged = true; messages.push({ role: 'assistant', content: '(已完成思考)' }); messages.push({ role: 'user', content: NUDGE_DIRECT }); continue; }
+        // Same guard as respond(): toolify prose finals once, nudge empty finals once.
+        if (!nudged) { nudged = true; messages.push({ role: 'assistant', content: content.trim() || '(已完成思考)' }); messages.push({ role: 'user', content: content.trim() ? NUDGE_TOOLIFY : NUDGE_DIRECT }); continue; }
         const result: AgentResponse = { kind: 'answer', text: content.trim() || EMPTY_RESULT_FALLBACK };
         onEvent({ type: 'done', result });
         return result;
