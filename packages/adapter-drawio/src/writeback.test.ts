@@ -43,7 +43,7 @@ test('drawio 写回:只改目标 diagram 的目标 cell,另一 diagram 字节级
   assert.deepEqual(res.touchedParts, ['d0']);
   const out = dec.decode(res.bytes);
   assert.match(out, /id="2"[^>]*value="新"/);
-  // d1 原封不动(字节级)
+  // d1 must be byte-for-byte untouched
   assert.ok(out.includes(D1), 'd1 应字节级不变');
 });
 
@@ -64,7 +64,7 @@ test('drawio 写回:add + delete 跨两个 diagram', async () => {
   const out = dec.decode(res.bytes);
 
   assert.deepEqual(res.touchedParts.sort(), ['d0', 'd1']);
-  assert.match(out, /id="n1"[^>]*value="新节点"/); // 加在 d0,parent 取锚点 cell '1'
+  assert.match(out, /id="n1"[^>]*value="新节点"/); // added to d0; parent taken from anchor cell '1'
   assert.match(out, /id="n1"[^>]*parent="1"/);
-  assert.doesNotMatch(out, /id="9"/); // d1 的节点被删
+  assert.doesNotMatch(out, /id="9"/); // the cell in d1 is deleted
 });

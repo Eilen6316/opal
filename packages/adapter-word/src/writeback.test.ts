@@ -1,5 +1,5 @@
 /**
- * Word 红线写回:replaceText(flow 锚点)→ w:ins/w:del,只改 word/document.xml,其余部件字节不变。
+ * Word redline writeback: replaceText (flow anchor) → w:ins/w:del; only word/document.xml is modified, all other parts stay byte-identical.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

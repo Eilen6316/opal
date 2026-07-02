@@ -1,9 +1,9 @@
 /**
- * WordRedlineWriteback —— Word 外科手术级 OOXML 写回后端。
- * flow 锚点的 quote.text 定位原文,按 op 落成 Word 原生可审阅修订,只重写 word/document.xml,其余部件字节级透传:
- *  · replaceText → run 级词级红线 <w:ins>/<w:del>(保留未触及 run);
- *  · setStyle    → 字符格式 <w:rPr>+<w:rPrChange>、段落格式 <w:pPr>+<w:pPrChange>(可逐条接受/拒绝的格式修订)。
- * 保真复用 writeback-surgical 的 repack;这就是 OtterPatch 的护城河所在。
+ * WordRedlineWriteback — surgical OOXML writeback backend for Word.
+ * Locates source text via the flow anchor's quote.text, then lands each op as a native Word reviewable revision, rewriting only word/document.xml and passing all other parts through byte-for-byte:
+ *  · replaceText → run-level, word-level redlines <w:ins>/<w:del> (untouched runs preserved);
+ *  · setStyle    → character formatting <w:rPr>+<w:rPrChange> and paragraph formatting <w:pPr>+<w:pPrChange> (format revisions that can be accepted/rejected individually).
+ * Fidelity comes from reusing writeback-surgical's repack; this is OtterPatch's moat.
  */
 import type {
   ChangeSet,
@@ -23,7 +23,7 @@ import type { CharProps, ParaProps } from './style.js';
 
 const dec = new TextDecoder();
 const enc = new TextEncoder();
-// replaceText → 词级红线;setStyle → 字符(rPr/rPrChange)+ 段落(pPr/pPrChange)格式修订
+// replaceText → word-level redlines; setStyle → character (rPr/rPrChange) + paragraph (pPr/pPrChange) format revisions
 const SUPPORTED: ReadonlySet<EditOpKind> = new Set<EditOpKind>(['replaceText', 'setStyle']);
 const DOC_PART = 'word/document.xml';
 
@@ -66,17 +66,17 @@ export class WordRedlineWriteback implements WritebackBackend {
         else dropped.push({ editId: e.id, reason: '文本改写缺少 quote 锚点,无法定位' });
       } else if (e.op.kind === 'setStyle') {
         const st0 = e.op.style;
-        // 页面级(分栏/页边距/纸张方向):天然全文,走 sectPr 外科补丁
+        // Page-level (columns/margins/orientation): inherently document-wide, handled via surgical sectPr patch
         if (st0.columns != null || st0.margin != null || st0.orient != null) {
           if (st0.columns != null) page.columns = st0.columns;
           if (st0.margin != null) page.margin = st0.margin;
           if (st0.orient != null) page.orient = st0.orient;
           applied.push(e.id);
-          // 同一条 edit 若还带字符/段落字段且有 quote,继续走下面的格式修订;纯页面级到此为止
+          // If the same edit also carries character/paragraph fields and has a quote, fall through to the format-revision path below; purely page-level edits stop here
           if (!quote && st0.font == null && st0.size == null && st0.bold == null && st0.align == null && st0.lineSpacing == null) continue;
         }
         if (!quote) {
-          // 全文字符/段落格式(all=true):v1 外科写回不支持逐 run 重写 —— 明确上报,绝不静默(工作区预览已生效)
+          // Document-wide character/paragraph formatting (all=true): v1 surgical writeback does not support per-run rewriting — report explicitly, never fail silently (workspace preview already applied)
           dropped.push({ editId: e.id, reason: '全文字符/段落格式(all=true)暂不支持外科写回,仅工作区预览生效;可改为对具体段落逐条下发' });
           continue;
         }
@@ -103,7 +103,7 @@ export class WordRedlineWriteback implements WritebackBackend {
     if (this.opts.author !== undefined) opts.author = this.opts.author;
     if (this.opts.date !== undefined) opts.date = this.opts.date;
     const { xml: redlined, changed } = redlineDocumentXml(dec.decode(docXml), edits, opts);
-    const sect = patchSectPr(redlined, page); // 页面级 sectPr 补丁(分栏/页边距/方向)
+    const sect = patchSectPr(redlined, page); // Page-level sectPr patch (columns/margins/orientation)
     const totalChanged = changed + (sect.changed ? 1 : 0);
     const bytes = repackOoxml(doc.bytes, { [DOC_PART]: enc.encode(sect.xml) });
 

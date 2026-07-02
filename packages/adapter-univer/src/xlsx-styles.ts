@@ -1,22 +1,26 @@
 /**
- * xl/styles.xml 编辑器 —— 把抽象格式(加粗/斜体/字色/填充/对齐/数字格式)登记成
- * numFmt / font / fill + 一条 cellXfs <xf>,返回单元格应使用的新 s 索引。
+ * xl/styles.xml editor — registers abstract formatting (bold/italic/font color/fill/
+ * alignment/number format) as numFmt / font / fill entries plus one cellXfs <xf>,
+ * and returns the new s index the cell should use.
  *
- * 设计:
- *  - 就地补丁:只重写 numFmts/fonts/fills/cellXfs 四个 section,其余(borders/cellStyleXfs/
- *    cellStyles/dxfs/tableStyles…)原样保留,绝不整段重排丢字段。
- *  - 继承基样式:新 <xf> 以单元格原 s 指向的 xf 为底,只覆盖被改动的属性(颜色/字号/名称尽量沿用)。
- *  - 去重:相同的 numFmt/font/fill/xf 复用已存在索引,不重复登记。
- *  - 缺省合成:遇到 <styleSheet/>(空)时合成最小合法骨架(Excel 要求 fills[0]=none、fills[1]=gray125)。
+ * Design:
+ *  - In-place patching: only the numFmts/fonts/fills/cellXfs sections are rewritten;
+ *    everything else (borders/cellStyleXfs/cellStyles/dxfs/tableStyles...) is kept
+ *    verbatim — never wholesale re-serialize and drop fields.
+ *  - Base-style inheritance: the new <xf> is built on the xf referenced by the cell's
+ *    original s, overriding only the changed properties (color/size/name are kept when possible).
+ *  - Dedup: identical numFmt/font/fill/xf entries reuse existing indices instead of re-registering.
+ *  - Default synthesis: on an empty <styleSheet/>, synthesize a minimal valid skeleton
+ *    (Excel requires fills[0]=none, fills[1]=gray125).
  */
 
 export interface AbstractCellStyle {
   bold?: boolean;
   italic?: boolean;
-  color?: string; // 字体色 #rrggbb
-  bgColor?: string; // 填充色 #rrggbb
+  color?: string; // font color #rrggbb
+  bgColor?: string; // fill color #rrggbb
   align?: 'left' | 'center' | 'right';
-  numberFormat?: string; // 数字格式,如 0% / "¥"#,##0.00
+  numberFormat?: string; // number format, e.g. 0% / "¥"#,##0.00
 }
 
 const DEFAULT_FONT = '<font><sz val="11"/><name val="Calibri"/></font>';
@@ -28,7 +32,7 @@ const DEFAULT_BORDER = '<border/>';
 const DEFAULT_STYLE_XF = '<xf numFmtId="0" fontId="0" fillId="0" borderId="0"/>';
 const DEFAULT_CELL_XF = '<xf numFmtId="0" fontId="0" fillId="0" borderId="0" xfId="0"/>';
 
-/** #abc / #aabbcc → AARRGGBB(默认不透明 FF)。 */
+/** #abc / #aabbcc → AARRGGBB (defaults to opaque FF alpha). */
 export function toArgb(color: string): string {
   let h = color.replace(/^#/, '').trim();
   if (h.length === 3) h = h.split('').map((c) => c + c).join('');
@@ -47,7 +51,7 @@ function escapeXml(s: string): string {
 const attrOf = (el: string, name: string): string | undefined =>
   new RegExp(`\\b${name}="([^"]*)"`).exec(el)?.[1];
 
-/** 取出某 section 的子元素数组;section 不存在返回 null,自闭合返回 []。 */
+/** Extract a section's child elements; returns null if the section is absent, [] if self-closing. */
 function sectionItems(xml: string, tag: string, itemTag: string): string[] | null {
   const open = new RegExp(`<${tag}\\b[^>]*?(/?)>`).exec(xml);
   if (!open) return null;
@@ -95,7 +99,7 @@ interface XfModel {
   fillId: string;
   borderId: string;
   xfId: string;
-  alignment?: string; // 完整 <alignment .../> 子元素
+  alignment?: string; // full <alignment .../> child element
 }
 function parseXf(el: string): XfModel {
   const align = /<alignment\b[^>]*\/>/.exec(el)?.[0] ?? /<alignment\b[\s\S]*?<\/alignment>/.exec(el)?.[0];
@@ -127,7 +131,7 @@ export class XlsxStyles {
   }
 
   private nextNumFmtId(): number {
-    let max = 163; // 自定义 numFmtId 从 164 起
+    let max = 163; // custom numFmtIds start at 164
     for (const el of this.numFmts) {
       const id = parseInt(attrOf(el, 'numFmtId') ?? '0', 10);
       if (id > max) max = id;
@@ -151,7 +155,7 @@ export class XlsxStyles {
     return arr.length - 1;
   }
 
-  /** 以 baseIdx(单元格原 s)为底应用 style,返回应写入单元格的新 s 索引。 */
+  /** Apply style on top of baseIdx (the cell's original s); returns the new s index to write to the cell. */
   resolveXf(baseIdx: number | undefined, style: AbstractCellStyle): number {
     const base = parseXf(this.cellXfs[baseIdx ?? 0] ?? this.cellXfs[0] ?? DEFAULT_CELL_XF);
     let { numFmtId, fontId, fillId } = base;
@@ -193,7 +197,7 @@ export class XlsxStyles {
     return this.ensureItem(this.cellXfs, xf);
   }
 
-  /** 把改动后的四个 section 写回 styles.xml(其余 section 原样保留);未改动则原样返回。 */
+  /** Write the four modified sections back into styles.xml (other sections kept verbatim); returns the original if unchanged. */
   toXml(): string {
     if (!this.dirty) return this.originalXml;
     const selfClosing = /<styleSheet\b[^>]*\/>/.exec(this.originalXml);
@@ -228,7 +232,7 @@ export class XlsxStyles {
 function section(tag: string, items: string[]): string {
   return `<${tag} count="${items.length}">${items.join('')}</${tag}>`;
 }
-/** 就地替换某 section 的整体内容(保留其余 XML);section 不存在则原样返回。 */
+/** Replace a section's entire content in place (rest of the XML preserved); returns input unchanged if the section is absent. */
 function replaceSection(xml: string, tag: string, items: string[]): string {
   const open = new RegExp(`<${tag}\\b[^>]*?(/?)>`).exec(xml);
   if (!open) return xml;

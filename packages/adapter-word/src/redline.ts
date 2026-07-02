@@ -1,12 +1,14 @@
 /**
- * Word 红线(track-changes)生成 —— 把"原文 → 改后"的词级 diff 编译成 Word 原生修订标记:
- * 删除 → <w:del><w:delText>;新增 → <w:ins><w:r><w:t>;未改 → 普通 <w:r><w:t>。
- * 这样 Agent 的改动落到 Word 时是可逐条 接受/拒绝 的原生修订,而非直接改字 —— 契合 OtterPatch
- * "可审阅安全执行"。clean-room 实现(仅用公开 OOXML 语义,不拷任何专有 skill 文本)。
+ * Word redline (track-changes) generation — compiles a word-level diff of "original → revised"
+ * into native Word revision markup: deletion → <w:del><w:delText>; insertion → <w:ins><w:r><w:t>;
+ * unchanged → plain <w:r><w:t>.
+ * This way Agent edits land in Word as native revisions that can be accepted/rejected one by one,
+ * rather than direct text mutation — matching OtterPatch's "reviewable safe execution".
+ * Clean-room implementation (uses only public OOXML semantics; copies no proprietary skill text).
  */
 export interface RedlineOptions {
   author?: string;
-  date?: string; // ISO,如 2026-01-01T00:00:00Z(由调用方传入,保持确定性)
+  date?: string; // ISO, e.g. 2026-01-01T00:00:00Z (supplied by caller to keep output deterministic)
   idStart?: number;
 }
 
@@ -21,7 +23,7 @@ function tokenize(s: string): string[] {
 
 const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
-/** 词级 LCS diff → equal/del/ins 段(相邻同 op 合并)。 */
+/** Word-level LCS diff → equal/del/ins segments (adjacent segments with the same op are merged). */
 export function diffWords(a: string, b: string): DiffSeg[] {
   const A = tokenize(a);
   const B = tokenize(b);
@@ -61,7 +63,7 @@ export function diffWords(a: string, b: string): DiffSeg[] {
   return out;
 }
 
-/** 把 diff 编译成段落内的 OOXML 修订 run 串(嵌进 word/document.xml 的 <w:p> 里)。 */
+/** Compile the diff into an in-paragraph OOXML revision run string (embedded inside a <w:p> in word/document.xml). */
 export function buildRedlineXml(original: string, revised: string, opts: RedlineOptions = {}): string {
   const author = esc(opts.author ?? 'OtterPatch');
   const date = opts.date ?? '1970-01-01T00:00:00Z';

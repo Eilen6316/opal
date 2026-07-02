@@ -1,34 +1,37 @@
 /**
- * 表格 Agent 的"取数/路由"共享件 —— 与厂商无关,供 OpenAI 兼容与 Claude 两条通道复用,
- * 保证默认 Claude 通道也拥有同样的 read_range/aggregate 取数 + answer_user 路由 + 多步 loop。
- * 各通道只负责把这里的"逻辑工具定义/系统提示/取数执行"映射到自家 SDK 的消息/工具格式。
+ * Shared data-fetching/routing pieces for the sheet Agent — vendor-agnostic, reused by both the
+ * OpenAI-compatible and Claude channels, so the default Claude channel gets the same
+ * read_range/aggregate fetching + answer_user routing + multi-step loop.
+ * Each channel only maps the logical tool defs / system prompt / fetch execution here onto its own SDK's message/tool format.
  */
 import type { ClarifyOption, ClarifyQuestion, HostDialect, ProposeRequest } from './model.js';
 import { safeParse } from './json-salvage.js';
 import { ROUTING_PREAMBLE, TOO_MANY_STEPS_MSG, ANSWER_USER_DESC, ASK_USER_DESC, READ_RANGE_DESC, AGGREGATE_DESC } from './prompts/index.js';
 import { DOC_TOOL_DEFS, execDocTool, type DocSnapshot } from './doc-tools.js';
 
-/** 多步 loop 的步数上限。取数四件套 + load_skill + 影子修复 + 收尾自检都各占一步,
- *  8 步在"加载手册→审计样式→读段→提案→修复→自检→重交"的专家流程里会被吃满(bench 实测 w-gongwen 撞限),放宽到 12。 */
+/** Step cap for the multi-step loop. Each of the four fetch tools + load_skill + shadow repair
+ *  + final self-check consumes a step; 8 steps get exhausted by the expert flow
+ *  "load manual → audit styles → read section → propose → repair → self-check → resubmit"
+ *  (bench actually hit the limit on w-gongwen), so relaxed to 12. */
 export const STEP_LIMIT = 12;
 export { ROUTING_PREAMBLE, TOO_MANY_STEPS_MSG };
 
-/** respond 系统提示拆两段:stable(路由前导+方言+技能,跨轮不变→可挂 prompt cache)与 volatile(当前文档/选区快照,每轮都变)。 */
+/** Split the respond system prompt in two: stable (routing preamble + dialect + skills, unchanged across turns → prompt-cacheable) and volatile (current doc/selection snapshot, changes every turn). */
 export function respondSystemParts(dialect: HostDialect, req: ProposeRequest): { stable: string; volatile: string } {
   return { stable: ROUTING_PREAMBLE + '\n\n' + dialect.systemPrompt, volatile: '当前文档/选区上下文:\n' + req.context };
 }
-/** respond 多步 loop 的系统提示(拼接版,OpenAI 兼容通道用)。 */
+/** System prompt for the respond multi-step loop (concatenated form, used by the OpenAI-compatible channel). */
 export function respondSystem(dialect: HostDialect, req: ProposeRequest): string {
   const p = respondSystemParts(dialect, req);
   return p.stable + '\n\n' + p.volatile;
 }
 
-/** 取最近多轮历史(防上下文过长)。 */
+/** Take the most recent history turns (guards against overlong context). */
 export function recentHistory(req: ProposeRequest): Array<{ role: 'user' | 'assistant'; content: string }> {
   return (req.history ?? []).slice(-12);
 }
 
-/** 厂商无关的"逻辑工具定义";各通道映射到自家工具格式(OpenAI function / Anthropic tool)。 */
+/** Vendor-agnostic logical tool definition; each channel maps it to its own tool format (OpenAI function / Anthropic tool). */
 export interface ToolDef {
   name: string;
   description: string;
@@ -98,20 +101,20 @@ export const AGGREGATE_DEF: ToolDef = {
 };
 export interface AggWhere { col: string; op: '=' | '!=' | '>' | '<' | 'contains'; value: string | number }
 
-/** 辅助工具菜单:answer_user / ask_user 总在;有整表快照加 read_range/aggregate;有文档快照加 Word 四件套。 */
+/** Auxiliary tool menu: answer_user / ask_user always present; add read_range/aggregate when a full-sheet snapshot exists; add the four Word doc tools when a document snapshot exists. */
 export function auxToolDefs(hasSheet: boolean, hasDoc = false): ToolDef[] {
   const base = [ANSWER_USER_DEF, ASK_USER_DEF];
   return [...base, ...(hasSheet ? [READ_RANGE_DEF, AGGREGATE_DEF] : []), ...(hasDoc ? DOC_TOOL_DEFS : [])];
 }
 
-/** 统一只读工具执行:sheet 工具 → execSheetTool;doc 工具 → execDocTool;都不认识 → '(unknown tool)'。 */
+/** Unified read-only tool execution: sheet tools → execSheetTool; doc tools → execDocTool; unrecognized → '(unknown tool)'. */
 export function execReadTool(name: string, args: Record<string, unknown>, req: { sheet?: SheetData; doc?: DocSnapshot }): string {
   const d = execDocTool(name, args as { from?: number; to?: number; pattern?: string }, req.doc);
   if (d !== null) return d;
   return execSheetTool(name, args as { a1?: string; column?: string; op?: string; groupBy?: string; where?: AggWhere }, req.sheet);
 }
 
-/** 容错解析 ask_user 入参(字符串或已解析对象皆可)→ 规范化的澄清问题;无有效问题则返回 []。 */
+/** Fault-tolerant parse of ask_user input (string or already-parsed object) → normalized clarify questions; returns [] when no valid question. */
 export function parseClarify(input: unknown): ClarifyQuestion[] {
   const obj = (typeof input === 'string' ? safeParse(input) : (input ?? {})) as { questions?: unknown };
   const arr = Array.isArray(obj.questions) ? obj.questions : [];
@@ -133,7 +136,7 @@ export function parseClarify(input: unknown): ClarifyQuestion[] {
   return out;
 }
 
-// ─────────────── 取数执行(read_range / aggregate) ───────────────
+// ─────────────── Data-fetch execution (read_range / aggregate) ───────────────
 
 export type SheetData = { a1: string; values: unknown[][] };
 
@@ -167,7 +170,7 @@ function cellRepr(v: unknown): string {
   return String(v);
 }
 
-/** 从整表全量数据里读任意 A1 区域,返回带引用的文本。 */
+/** Read any A1 range from the full-sheet data; returns text with cell references. */
 export function readRange(sheet: SheetData, query: string): string {
   const s = startOf(sheet.a1);
   const parts = query.replace(/^.*!/, '').replace(/[$]/g, '').split(':');
@@ -206,7 +209,7 @@ function aggOf(nums: number[], op: string): string {
   return `sum=${Math.round(sum * 1000) / 1000} avg=${Math.round((sum / nums.length) * 100) / 100} min=${Math.min(...nums)} max=${Math.max(...nums)} count=${nums.length}`;
 }
 
-/** 对某列做聚合(跳过表头);支持 where 先筛选、groupBy 分组(透视/分组汇总)。 */
+/** Aggregate a column (skipping the header row); supports where pre-filtering and groupBy grouping (pivot/grouped summary). */
 export function aggregate(sheet: SheetData, column: string, op: string, groupBy?: string, where?: AggWhere): string {
   const s = startOf(sheet.a1);
   const ci = colIndex(column.replace(/[^A-Za-z]/g, '') || 'A') - s.c;
@@ -249,7 +252,7 @@ export function aggregate(sheet: SheetData, column: string, op: string, groupBy?
   return nums.length ? aggOf(nums, op) : '该列无数值';
 }
 
-/** 按工具名执行只读取数工具,返回回喂模型的文本。 */
+/** Execute a read-only fetch tool by name; returns text fed back to the model. */
 export function execSheetTool(name: string, args: { a1?: string; column?: string; op?: string; groupBy?: string; where?: AggWhere }, sheet?: SheetData): string {
   if (name === 'read_range' && sheet) return readRange(sheet, String(args.a1 ?? ''));
   if (name === 'aggregate' && sheet) return aggregate(sheet, String(args.column ?? ''), String(args.op ?? ''), args.groupBy, args.where);

@@ -1,19 +1,21 @@
 /**
- * drawio 影子校验器 —— 图的自检核心是"拓扑完整性":
- * update/delete/move 的目标 id 必须真实存在(否则静默 no-op);
- * 新建边的 source/target 必须指向【已存在的节点】或【同一提案里新建的节点】(悬空边是最常见的图损坏);
- * 新建 id 不得撞已有 id、也不得在提案内重复。
- * 与 word-verify 同构:纯字符串/结构检查,零适配器依赖,报告结构化回喂 propose→observe→repair。
+ * drawio shadow verifier — the core of graph self-checking is "topological integrity":
+ * target ids of update/delete/move must actually exist (otherwise they silently no-op);
+ * a new edge's source/target must point to an existing node or a node created in the same
+ * proposal (dangling edges are the most common form of graph corruption);
+ * new ids must not collide with existing ids nor repeat within the proposal.
+ * Isomorphic to word-verify: pure string/structural checks, zero adapter dependencies,
+ * with a structured report fed back into propose→observe→repair.
  */
 import type { ChangeSet, VerifyReport } from '@otterpatch/core';
 
-/** 由"画板拓扑上下文"(propose 时喂给模型的 context)造一个自检器。 */
+/** Build a self-check verifier from the board topology context (the context fed to the model at propose time). */
 export function buildDrawioVerifier(boardContext: string): (cs: ChangeSet) => VerifyReport {
   const known = (id: string): boolean => !!id && boardContext.includes(id);
   return (cs: ChangeSet): VerifyReport => {
     const errors: string[] = [];
     const warnings: string[] = [];
-    // 收集本提案新建的 id(边可以指向同提案新建的节点)
+    // Collect ids created in this proposal (edges may point to nodes created in the same proposal)
     const created = new Set<string>();
     for (const e of cs.edits) {
       if (e.op.kind === 'addObject') {
@@ -40,7 +42,7 @@ export function buildDrawioVerifier(boardContext: string): (cs: ChangeSet) => Ve
         if (p.parent && p.parent !== '1' && !known(p.parent) && !created.has(p.parent)) warnings.push(`新建对象的 parent="${p.parent}" 不在画板中,将落到默认层`);
         continue;
       }
-      // update/delete/move:目标必须真实存在
+      // update/delete/move: the target must actually exist
       if (!elementId) { errors.push(`有一条 ${e.op.kind} 改动没有目标 id,无法落地`); continue; }
       if (!known(elementId)) { errors.push(`${e.op.kind} 的目标 id "${elementId}" 不在画板中 —— 这条改动会静默失效。请用上下文里真实的 cell id`); continue; }
       if (e.op.kind === 'deleteObject' && touched.has(elementId)) warnings.push(`id "${elementId}" 在本提案里先被修改又被删除,前面的修改将被浪费`);

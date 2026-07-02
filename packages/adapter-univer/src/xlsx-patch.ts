@@ -1,13 +1,13 @@
 /**
- * Excel ChangeSet → xlsx OOXML 部件补丁编译器(OoxmlPatchCompiler 实现)。
- * 把 setValue/setFormula/setStyle/setNumberFormat/deleteRange 编译成对
- * xl/worksheets/sheetN.xml(值/公式/样式索引)与 xl/styles.xml(样式登记)的最小改动。
+ * Excel ChangeSet → xlsx OOXML part patch compiler (OoxmlPatchCompiler implementation).
+ * Compiles setValue/setFormula/setStyle/setNumberFormat/deleteRange into minimal changes to
+ * xl/worksheets/sheetN.xml (values/formulas/style indices) and xl/styles.xml (style registration).
  *
- * 诚实写回:
- *  - 每条 edit 上报 applied / dropped(原因),逐 edit 隔离——一条失败不拖垮整批;
- *  - 不支持的 op(结构/对象/raw)被显式丢弃并附原因,绝不静默"成功";
- *  - 目标单元格不存在则插入新 <c>(必要时建 <row>),不再 throw。
- *  - 字符串走 inlineStr(不碰 sharedStrings);公式写 <f> 不带缓存值(打开时由 Excel 重算)。
+ * Honest write-back:
+ *  - Each edit reports applied / dropped (with reason); edits are isolated — one failure does not sink the batch;
+ *  - Unsupported ops (structural/object/raw) are explicitly dropped with a reason, never silently "succeed";
+ *  - If the target cell does not exist, insert a new <c> (creating a <row> if needed) instead of throwing.
+ *  - Strings use inlineStr (sharedStrings untouched); formulas write <f> without a cached value (Excel recalculates on open).
  */
 import { unzipSync } from 'fflate';
 import type { CellValue, ChangeSet, EditId, LogicalAnchor } from '@otterpatch/core';
@@ -35,7 +35,7 @@ function parseRef(ref: string): { col: number; row: number } {
   const m = /^([A-Za-z]+)([0-9]+)$/.exec(ref);
   return { col: m ? colToNum(m[1]!) : 1, row: m ? parseInt(m[2]!, 10) : 1 };
 }
-/** A1 或 A1:B3 → 单元格引用列表(范围按行列展开)。 */
+/** A1 or A1:B3 → list of cell refs (ranges expanded row by row, column by column). */
 function expandCells(a1: string): string[] {
   const [from, to] = a1.split(':');
   if (!to) return [from!.toUpperCase()];
@@ -47,7 +47,7 @@ function expandCells(a1: string): string[] {
   return out;
 }
 
-/** 把 sheet 名解析到 xl/worksheets/sheetN.xml;单 sheet 或解析失败 → 默认 sheet1。 */
+/** Resolve a sheet name to xl/worksheets/sheetN.xml; single sheet or resolution failure → default sheet1. */
 export function resolveSheetPart(parts: OoxmlParts, sheetName?: string): string {
   const fallback = 'xl/worksheets/sheet1.xml';
   const wbBytes = parts['xl/workbook.xml'];
@@ -88,7 +88,7 @@ interface CellHit {
   len: number;
   sIdx?: number;
   t?: string;
-  inner?: string; // undefined ⇒ 自闭合 <c .../>
+  inner?: string; // undefined ⇒ self-closing <c .../>
 }
 function findCell(sheetXml: string, ref: string): CellHit | null {
   const m = new RegExp(`<c r="${ref}"([^>]*?)(?:/>|>([\\s\\S]*?)</c>)`).exec(sheetXml);
@@ -107,7 +107,7 @@ function findCell(sheetXml: string, ref: string): CellHit | null {
 
 const sAttrOf = (sIdx?: number): string => (sIdx != null ? ` s="${sIdx}"` : '');
 
-/** 值单元格 XML(保留传入样式 s)。 */
+/** Value-cell XML (preserves the given style index s). */
 function valueCellXml(ref: string, value: CellValue, sIdx?: number): string {
   const s = sAttrOf(sIdx);
   if (value === null) return `<c r="${ref}"${s}/>`;
@@ -116,11 +116,11 @@ function valueCellXml(ref: string, value: CellValue, sIdx?: number): string {
   const space = /^\s|\s$/.test(value) ? ' xml:space="preserve"' : '';
   return `<c r="${ref}"${s} t="inlineStr"><is><t${space}>${escapeXml(value)}</t></is></c>`;
 }
-/** 公式单元格 XML:写 <f> 不带缓存值(Excel/LibreOffice 打开时自动重算)。 */
+/** Formula-cell XML: writes <f> without a cached value (Excel/LibreOffice recalculates on open). */
 function formulaCellXml(ref: string, formula: string, sIdx?: number): string {
   return `<c r="${ref}"${sAttrOf(sIdx)}><f>${escapeXml(formula.replace(/^=/, ''))}</f></c>`;
 }
-/** 只换样式 s、保留原内容的单元格 XML(setStyle/setNumberFormat)。 */
+/** Cell XML that swaps only the style index s and keeps original content (setStyle/setNumberFormat). */
 function restyleCellXml(ref: string, newS: number, existing: CellHit | null): string {
   const s = ` s="${newS}"`;
   if (!existing) return `<c r="${ref}"${s}/>`;
@@ -129,7 +129,7 @@ function restyleCellXml(ref: string, newS: number, existing: CellHit | null): st
   return `<c r="${ref}"${s}${t}>${existing.inner}</c>`;
 }
 
-/** 替换已存在的 <c>,或按列/行序插入新 <c>(必要时建 <row>)。 */
+/** Replace an existing <c>, or insert a new <c> in column/row order (creating a <row> if needed). */
 function upsertCell(sheetXml: string, ref: string, newCellXml: string, hit: CellHit | null): string {
   if (hit) return sheetXml.slice(0, hit.index) + newCellXml + sheetXml.slice(hit.index + hit.len);
   const { col, row } = parseRef(ref);
@@ -170,7 +170,7 @@ function upsertCell(sheetXml: string, ref: string, newCellXml: string, hit: Cell
   return sheetXml.slice(0, insAt) + rowXml + sheetXml.slice(insAt);
 }
 
-/** 从 grid 锚点取 {sheet?, a1}(a1 可能是范围)。 */
+/** Extract {sheet?, a1} from a grid anchor (a1 may be a range). */
 function anchorA1(a: LogicalAnchor): { sheet?: string; a1: string } | null {
   const p = a.portable;
   if (p.kind !== 'grid') return null;
@@ -192,7 +192,7 @@ function resolveStylesPath(parts: OoxmlParts): string | null {
 
 const SUPPORTED = new Set(['setValue', 'setFormula', 'setStyle', 'setNumberFormat', 'deleteRange']);
 
-/** 构造 Excel 的 OoxmlPatchCompiler:ChangeSet → sheet/styles XML 补丁 + 逐 edit 报告。 */
+/** Build the Excel OoxmlPatchCompiler: ChangeSet → sheet/styles XML patches + per-edit report. */
 export function buildXlsxCompiler() {
   return async function compile(cs: ChangeSet, original: Uint8Array): Promise<OoxmlPatchResult> {
     const parts = unzipSync(original);
@@ -260,11 +260,11 @@ export function buildXlsxCompiler() {
             if (kind === 'setFormula') {
               cellXml = formulaCellXml(ref, (edit.op as { formula: string }).formula ?? '', hit?.sIdx);
             } else if (kind === 'deleteRange') {
-              if (!hit) continue; // 目标本就为空,清空即无操作
+              if (!hit) continue; // target already empty; clearing is a no-op
               cellXml = valueCellXml(ref, null, hit.sIdx);
             } else {
               const value = (edit.op as { value: CellValue }).value ?? null;
-              if (value === null && !hit) continue; // 写空到空格,跳过
+              if (value === null && !hit) continue; // writing null to an empty cell; skip
               cellXml = valueCellXml(ref, value, hit?.sIdx);
             }
             xml = upsertCell(xml, ref, cellXml, hit);

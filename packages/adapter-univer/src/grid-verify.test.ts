@@ -1,5 +1,5 @@
 /**
- * 影子校验器:把提案应用到整表快照影子、重算,产出可回喂的观察 + 问题清单。
+ * Shadow verifier: applies a proposed ChangeSet to a full-sheet snapshot shadow, recalculates, and produces observations (feedable back to the model) plus a list of issues.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

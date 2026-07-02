@@ -1,6 +1,6 @@
 /**
- * Host 方言:Excel(A1 + setValue/setFormula)与 drawio(mxCell id + add/update/delete/move)。
- * 每种格式有自己的系统提示、工具 schema、原始提案 → ChangeSet 的构造。
+ * Host dialects: Excel (A1 + setValue/setFormula) and drawio (mxCell id + add/update/delete/move).
+ * Each format has its own system prompt, tool schema, and raw-proposal → ChangeSet construction.
  */
 import type { AnchorId, CellValue, ChangeSet, Edit, EditOp, HostId, LogicalAnchor } from '@otterpatch/core';
 import type { HostDialect, ProposeRequest } from './model.js';
@@ -31,11 +31,11 @@ function newChangeSet(
 export interface ExcelStyle {
   bold?: boolean;
   italic?: boolean;
-  color?: string; // 字体色
-  bgColor?: string; // 填充/背景色(标红高亮即 bgColor)
+  color?: string; // font color
+  bgColor?: string; // fill/background color (red-flag highlighting means bgColor)
   align?: 'left' | 'center' | 'right';
 }
-/** Excel 支持的操作(单一事实源:schema 与 serve 启动横幅都用它,便于核对 serve 是否最新)。 */
+/** Excel supported ops (single source of truth: used by both the schema and the serve startup banner, to verify serve is up to date). */
 export const EXCEL_OPS = [
   'setValue', 'setFormula', 'setStyle', 'setNumberFormat',
   'insertRows', 'deleteRows', 'insertCols', 'deleteCols',
@@ -53,25 +53,25 @@ export interface ExcelProposal {
     value?: CellValue;
     formula?: string;
     style?: ExcelStyle;
-    pattern?: string; // setNumberFormat 的数字格式,如 0% / "¥"#,##0.00
-    count?: number; // insert/delete 行列数
-    before?: boolean; // insert 在目标前
-    rows?: number; // freeze 冻结行数
-    cols?: number; // freeze 冻结列数
-    by?: number; // sort 依据列(范围内 0 基)
-    asc?: boolean; // sort 升序
-    when?: CondWhen; // condFormat 条件
-    v1?: number | string; // condFormat 操作数1 / between 下界
-    v2?: number; // condFormat between 上界
-    rule?: DvKind; // dataValidation 类型
-    list?: string[]; // dataValidation 下拉选项
-    min?: number; // dataValidation numberBetween 下界
-    max?: number; // dataValidation numberBetween 上界
-    v?: number; // dataValidation numberGreaterThan 阈值
-    chartType?: 'bar' | 'line' | 'pie'; // chart 图表类型
-    title?: string; // chart 标题
-    categories?: string[]; // chart 内联类别(x 轴/扇区名);给了它=内联模式,cell 当放置锚点,不写汇总表
-    series?: { name: string; data: number[] }[]; // chart 内联系列,data 与 categories 等长
+    pattern?: string; // setNumberFormat number format, e.g. 0% / "¥"#,##0.00
+    count?: number; // insert/delete row/column count
+    before?: boolean; // insert before the target
+    rows?: number; // freeze: number of rows to freeze
+    cols?: number; // freeze: number of columns to freeze
+    by?: number; // sort key column (0-based within range)
+    asc?: boolean; // sort ascending
+    when?: CondWhen; // condFormat condition
+    v1?: number | string; // condFormat operand 1 / between lower bound
+    v2?: number; // condFormat between upper bound
+    rule?: DvKind; // dataValidation kind
+    list?: string[]; // dataValidation dropdown options
+    min?: number; // dataValidation numberBetween lower bound
+    max?: number; // dataValidation numberBetween upper bound
+    v?: number; // dataValidation numberGreaterThan threshold
+    chartType?: 'bar' | 'line' | 'pie'; // chart type
+    title?: string; // chart title
+    categories?: string[]; // chart inline categories (x-axis/sector names); if given = inline mode, cell is the placement anchor, no summary table is written
+    series?: { name: string; data: number[] }[]; // chart inline series; each data must match categories length
   }>;
 }
 
@@ -110,8 +110,8 @@ function buildExcelChangeSet(req: ProposeRequest, p: ExcelProposal): ChangeSet {
       case 'dataValidation': op = { family: 'style', kind: 'dataValidation', rule: e.rule ?? 'list', ...(e.list ? { list: e.list } : {}), ...(e.min != null ? { min: e.min } : {}), ...(e.max != null ? { max: e.max } : {}), ...(e.v != null ? { v: e.v } : {}) }; break;
       case 'filter': op = { family: 'structure', kind: 'autoFilter' }; break;
       case 'chart':
-        // 内联模式(透视图首选):categories/series 直接给数据,cell=放置图表的锚点格,主表不落汇总表。
-        // 范围模式(对已有数据画图):无 categories,cell=含表头的数据范围。
+        // Inline mode (preferred for pivot-style charts): categories/series carry the data directly, cell = anchor cell for chart placement, no summary table written into the sheet.
+        // Range mode (charting existing data): no categories, cell = data range including headers.
         op = e.categories?.length
           ? { family: 'object', kind: 'insertChart', chartType: e.chartType ?? 'bar', title: e.title ?? '图表', categories: e.categories, series: e.series ?? [], anchor: e.cell }
           : { family: 'object', kind: 'insertChart', chartType: e.chartType ?? 'bar', title: e.title ?? '图表', range: e.cell };
@@ -186,8 +186,8 @@ export const excelDialect: HostDialect = {
 
 export interface DrawioProposalOp {
   op: 'add' | 'update' | 'delete' | 'move';
-  cellId?: string; // update/delete/move 的目标 mxCell id;add 时为新节点 id
-  page?: number; // diagram 序号,默认 0
+  cellId?: string; // target mxCell id for update/delete/move; new node id for add
+  page?: number; // diagram index, defaults to 0
   value?: string;
   style?: string;
   parent?: string;
@@ -219,7 +219,7 @@ function buildDrawioChangeSet(req: ProposeRequest, p: DrawioProposal): ChangeSet
     switch (o.op) {
       case 'add': {
         const parent = o.parent ?? '1';
-        elementId = o.cellId ?? 'add' + i; // 锚点指向【新建对象】本身(diff/审阅更清晰);父容器由 payload.parent 携带
+        elementId = o.cellId ?? 'add' + i; // anchor points at the newly created object itself (clearer diff/review); parent container is carried via payload.parent
         op = {
           family: 'object',
           kind: 'addObject',
@@ -309,8 +309,8 @@ export interface WordProposal {
   plan: string;
   edits: Array<{
     quote: string;
-    replacement?: string; // 文本改写:给了它=替换原文
-    // 格式(任一存在=格式改动,不需 replacement);all=true 表示对全文,此时 quote 可省
+    replacement?: string; // text rewrite: if given, replaces the original text
+    // Formatting (any present = format edit, replacement not needed); all=true means whole document, quote may be omitted
     all?: boolean;
     bold?: boolean;
     italic?: boolean;
@@ -318,12 +318,12 @@ export interface WordProposal {
     font?: string;
     size?: number;
     color?: string;
-    // 段落级格式(作用于 quote 所在整段)
+    // Paragraph-level formatting (applies to the whole paragraph containing quote)
     align?: 'left' | 'center' | 'right' | 'justify';
-    lineSpacing?: number; // 行距倍数 1 / 1.5 / 2
-    bgColor?: string; // 段落底纹色
-    block?: 'h1' | 'h2' | 'h3' | 'p' | 'blockquote'; // 段落样式:标题1-3 / 正文 / 引用
-    // 页面级(须 all=true):分栏 / 页边距 / 纸张方向 —— IEEE 双栏等版式的关键参数
+    lineSpacing?: number; // line spacing multiple: 1 / 1.5 / 2
+    bgColor?: string; // paragraph shading color
+    block?: 'h1' | 'h2' | 'h3' | 'p' | 'blockquote'; // paragraph style: heading 1-3 / body / blockquote
+    // Page-level (requires all=true): columns / margins / orientation — key params for IEEE two-column layouts etc.
     columns?: number;
     margin?: 'narrow' | 'normal' | 'moderate' | 'wide';
     orient?: 'portrait' | 'landscape';

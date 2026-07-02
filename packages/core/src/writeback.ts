@@ -1,21 +1,21 @@
 /**
- * 写回保真 —— 可插拔后端 + 逐 edit 路由 + 自动降级 + verify。
- * 实测:外科补丁(surgical-ooxml)在真实 .docx 上 30/31 部件字节级不变;模型往返重写 11/31。
- * 详见 .work/abstraction-layer.md §7 与 .work/kill-experiments.md。
+ * Writeback fidelity — pluggable backends + per-edit routing + automatic fallback + verify.
+ * Measured: surgical patching (surgical-ooxml) keeps 30/31 parts byte-identical on real .docx; model roundtrip rewrites 11/31.
+ * See .work/abstraction-layer.md §7 and .work/kill-experiments.md.
  */
 import type { DocRev } from './anchor.js';
 import type { ChangeSet, EditId, EditOpKind } from './changeset.js';
 
 export type WritebackId = string & { readonly __brand: 'WritebackId' };
 export type WritebackKind =
-  | 'surgical-ooxml' // 首选:只改目标部件 XML、其余字节原样
-  | 'surgical-xml' // drawio 等单 XML:只改目标 <diagram>、其余字节原样
+  | 'surgical-ooxml' // Preferred: modify only the target part's XML, leave all other bytes untouched
+  | 'surgical-xml' // Single-XML formats (e.g. drawio): modify only the target <diagram>, leave other bytes untouched
   | 'model-roundtrip'
   | 'libreoffice-headless'
   | 'native-command';
 
 export interface OoxmlPart {
-  path: string; // xl/worksheets/sheet1.xml、word/document.xml、ppt/slides/slideN.xml
+  path: string; // e.g. xl/worksheets/sheet1.xml, word/document.xml, ppt/slides/slideN.xml
   xpath?: string;
 }
 
@@ -38,16 +38,16 @@ export interface WritebackResult {
   touchedParts: string[];
   fidelity: FidelityReport;
   fallbackUsed?: WritebackKind;
-  /** 真正落盘的 edit(诚实写回:每条 edit 是否被写入)。省略=后端未上报(视为全部已写)。 */
+  /** Edits actually persisted (honest writeback: per-edit applied status). Omitted = backend did not report (treat all as applied). */
   appliedEditIds?: EditId[];
-  /** 被静默丢弃的 edit + 原因(如 op 不被该写回后端支持、目标越界)。非空 ⇒ ok=false。 */
+  /** Silently dropped edits + reasons (e.g. op unsupported by this backend, target out of range). Non-empty ⇒ ok=false. */
   droppedEdits?: Array<{ editId: EditId; reason: string }>;
 }
 
 export interface WritebackBackend {
   readonly id: WritebackId;
   readonly strategy: WritebackKind;
-  canHandle(cs: ChangeSet): { ok: boolean; reason?: string }; // surgical 对跨部件大重排返回 no → 降级
+  canHandle(cs: ChangeSet): { ok: boolean; reason?: string }; // surgical returns no for large cross-part restructuring → fall back
   supports(op: EditOpKind, part: OoxmlPart): boolean;
   commit(cs: ChangeSet, doc: DocHandle): Promise<WritebackResult>;
   verify(before: DocHandle, after: DocHandle, cs: ChangeSet): Promise<FidelityReport>;
@@ -58,6 +58,6 @@ export interface WritebackRouter {
     cs: ChangeSet,
     backends: readonly WritebackBackend[],
   ): Array<{ editIds: EditId[]; backend: WritebackBackend }>;
-  /** route→commit;verify 不达标→自动降级下一后端;校验不过则 tx 不进 committed。 */
+  /** route→commit; if verify falls short → automatically fall back to the next backend; if verification fails, the tx never enters committed. */
   commitWithFallback(cs: ChangeSet, doc: DocHandle): Promise<WritebackResult>;
 }

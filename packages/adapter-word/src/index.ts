@@ -1,7 +1,7 @@
 /**
- * @otterpatch/adapter-word —— Word 适配器(起步)。当前先落地最出彩的"红线写回"精华:
- * 词级 diff → Word 原生修订(w:ins/w:del),供 ChangeSet 的逐块 accept/reject 编译成可审阅修订。
- * 后续:ProseMirror 流式选区(flow 锚点)+ word/document.xml 段落级外科写回(复用 writeback-surgical)。
+ * @otterpatch/adapter-word — Word adapter (early stage). Currently ships the core "redline writeback" feature:
+ * word-level diff → native Word tracked changes (w:ins/w:del), so per-block accept/reject from a ChangeSet compiles into reviewable revisions.
+ * Later: ProseMirror flow selections (flow anchors) + paragraph-level surgical writeback of word/document.xml (reusing writeback-surgical).
  */
 export * from './redline.js';
 export * from './document.js';

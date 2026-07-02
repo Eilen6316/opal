@@ -1,5 +1,5 @@
 /**
- * @otterpatch/adapter-pdf —— PDF 适配器(起步:AcroForm 表单填写写回,pdf-lib)。
- * 后续:文本抽取(选区上下文)、叠加注释、按页定位锚点。
+ * @otterpatch/adapter-pdf — PDF adapter (initial scope: AcroForm form-fill writeback via pdf-lib).
+ * Planned: text extraction (selection context), overlay annotations, per-page anchor positioning.
  */
 export * from './writeback.js';

@@ -1,7 +1,7 @@
 /**
- * 并发内核 —— SuggestionTransaction 状态机 + Git 三路 rebase + 单写者提交队列。
- * 人↔Agent 协作不可降级为"最后写赢"。复用统一的 AnchorService.rebase。
- * 详见 .work/abstraction-layer.md §6。
+ * Concurrency kernel — SuggestionTransaction state machine + Git-style three-way rebase + single-writer commit queue.
+ * Human↔Agent collaboration must never degrade to "last write wins". Reuses the unified AnchorService.rebase.
+ * See .work/abstraction-layer.md §6.
  */
 import type { AnchorId, DocRev, MutationLog } from './anchor.js';
 import type { ChangeOrigin, ChangeSet, Edit, ShadowResult } from './changeset.js';
@@ -10,15 +10,15 @@ import type { DiffDecision, DiffNodeId, DiffView, PreviewValue } from './diff.js
 export type TxId = string & { readonly __brand: 'TxId' };
 
 export type TxState =
-  | 'draft' // Agent 报计划阶段,未影子
-  | 'proposed' // 已 shadowApply + diff 就绪,待审
+  | 'draft' // Agent is reporting its plan; not shadow-applied yet
+  | 'proposed' // shadowApply done + diff ready; awaiting review
   | 'partiallyAccepted'
-  | 'staged' // 投影子集已在当前 rev 重校验通过,待提交
+  | 'staged' // projected subset re-validated against current rev; ready to commit
   | 'committing'
   | 'committed'
   | 'rejected'
   | 'rolledBack'
-  | 'stale' // base 落后,需 rebase
+  | 'stale' // base rev has fallen behind; rebase required
   | 'rebasing'
   | 'conflicted'
   | 'abandoned';
@@ -26,13 +26,13 @@ export type TxState =
 export interface SuggestionTransaction {
   readonly id: TxId;
   readonly state: TxState;
-  readonly changeSet: ChangeSet; // rebase 后被迁移版替换
+  readonly changeSet: ChangeSet; // replaced by the migrated version after rebase
   readonly baseRev: DocRev;
   readonly shadow?: ShadowResult;
   readonly diff?: DiffView;
   readonly decisions: ReadonlyMap<DiffNodeId, DiffDecision>;
   readonly origin: ChangeOrigin;
-  readonly dependsOn?: readonly TxId[]; // 建议间依赖(B 锚定区依赖 A)
+  readonly dependsOn?: readonly TxId[]; // inter-suggestion dependency (B's anchored region depends on A)
   readonly history: readonly { at: number; kind: string; detail?: unknown }[];
 }
 
@@ -55,14 +55,14 @@ export type RebaseOutcome =
 export interface TransactionManager {
   begin(origin: ChangeOrigin, baseRev: DocRev): SuggestionTransaction;
   appendOps(tx: TxId, edits: Edit[]): SuggestionTransaction;
-  propose(tx: TxId): Promise<SuggestionTransaction>; // → proposed:shadowApply + diff
+  propose(tx: TxId): Promise<SuggestionTransaction>; // → proposed: shadowApply + diff
   decide(tx: TxId, node: DiffNodeId, d: 'accepted' | 'rejected'): SuggestionTransaction;
-  stage(tx: TxId): Promise<SuggestionTransaction>; // → staged:project + 当前 rev 重校验
-  commit(tx: TxId): Promise<{ rev: DocRev }>; // 经单写者队列串行化
+  stage(tx: TxId): Promise<SuggestionTransaction>; // → staged: project + re-validate against current rev
+  commit(tx: TxId): Promise<{ rev: DocRev }>; // serialized through the single-writer queue
   reject(tx: TxId): SuggestionTransaction;
   rollback(tx: TxId): Promise<SuggestionTransaction>;
   onDocumentAdvanced(from: DocRev, to: DocRev, incoming: MutationLog): TxId[];
   rebase(tx: TxId, onto: DocRev, incoming: MutationLog): RebaseOutcome;
-  rebaseOnto(txB: TxId, txA: TxId): RebaseOutcome; // 建议间
+  rebaseOnto(txB: TxId, txA: TxId): RebaseOutcome; // between suggestions
   merge(a: TxId, b: TxId): MergePlan;
 }

@@ -1,5 +1,5 @@
 /**
- * pptx 外科写回:replaceText(flow 锚点 path[0]=slide、quote=原文)→ slide <a:t> 文本替换,仅 slideN.xml 变。
+ * pptx surgical writeback: replaceText (flow anchor with path[0]=slide, quote=original text) replaces slide <a:t> text; only slideN.xml changes.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

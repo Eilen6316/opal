@@ -10,7 +10,7 @@ test('sectPr:双栏 → 插入 cols(pgMar 之后),其余零触碰', () => {
   const r = patchSectPr(DOC, { columns: 2 });
   assert.equal(r.changed, true);
   assert.match(r.xml, /<w:pgMar[^>]*\/><w:cols w:num="2" w:space="425" w:equalWidth="1"\/>/);
-  assert.match(r.xml, /<w:t>正文<\/w:t>/); // 正文不动
+  assert.match(r.xml, /<w:t>正文<\/w:t>/); // body text untouched
 });
 
 test('sectPr:恢复单栏 → cols 去掉 num', () => {
@@ -24,7 +24,7 @@ test('sectPr:窄边距 → pgMar 四边替换,header/footer/gutter 保留', () =
   const r = patchSectPr(DOC, { margin: 'narrow' });
   assert.match(r.xml, /w:top="720"/);
   assert.match(r.xml, /w:left="720"/);
-  assert.match(r.xml, /w:header="851"/); // 原值保留
+  assert.match(r.xml, /w:header="851"/); // original value preserved
 });
 
 test('sectPr:横向 → orient=landscape 且宽高交换', () => {

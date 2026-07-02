@@ -11,7 +11,7 @@ test('① 精确文本 + 前后文吻合 → 高置信', () => {
 
 test('① 多处同文本 → 前后文消歧选对位置', () => {
   const m = resolveFlow('a BAR b c BAR d', { prefix: 'c ', text: 'BAR', suffix: ' d' })!;
-  assert.equal(m.start, 10); // 第二个 BAR(前后文吻合),而非第一个
+  assert.equal(m.start, 10); // the second BAR (context matches), not the first
   assert.ok(m.confidence > 0.95);
 });
 

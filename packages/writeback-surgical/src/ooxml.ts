@@ -1,30 +1,33 @@
 /**
- * OOXML 外科补丁核心工具(已用真实 .docx 实测验证)。
- * 把 .docx/.xlsx 当 zip:只重写被命中的部件,其余部件【字节级原样透传】,重新打包。
- * 实测:30/31 部件字节级不变(见 experiments/exp1_surgical_test.py)。
+ * Core OOXML surgical-patch utilities (validated against real .docx files).
+ * Treats .docx/.xlsx as a zip: only rewrite the targeted parts, pass all other
+ * parts through byte-for-byte unchanged, then repack.
+ * Measured: 30/31 parts byte-identical (see experiments/exp1_surgical_test.py).
  */
 import { unzipSync, zipSync, type Zippable } from 'fflate';
 
 export type OoxmlParts = Record<string, Uint8Array>;
 
-/** 读出 .docx/.xlsx(zip)的全部部件(path → bytes)。 */
+/** Read all parts of a .docx/.xlsx (zip) as path → bytes. */
 export function readOoxmlParts(bytes: Uint8Array): OoxmlParts {
   return unzipSync(bytes);
 }
 
 /**
- * 外科补丁:只重写 patches 中的部件,其余部件字节级原样透传,重新打包。
- * 这是"高保真写回"的首选机制——绝不整文件重序列化。
+ * Surgical patch: rewrite only the parts listed in `patches`; all other parts
+ * pass through byte-for-byte unchanged, then repack.
+ * This is the preferred mechanism for high-fidelity writeback — never
+ * re-serialize the whole file.
  */
 export function repackOoxml(originalBytes: Uint8Array, patches: OoxmlParts): Uint8Array {
   const parts = unzipSync(originalBytes);
   const out: Zippable = {};
   for (const [path, data] of Object.entries(parts)) {
     const patched = patches[path];
-    out[path] = patched ?? data; // 命中→新内容;未命中→原字节
+    out[path] = patched ?? data; // patched → new content; otherwise → original bytes
   }
   for (const [path, data] of Object.entries(patches)) {
-    if (!(path in parts)) out[path] = data; // 新增部件
+    if (!(path in parts)) out[path] = data; // newly added parts
   }
   return zipSync(out);
 }
@@ -32,11 +35,11 @@ export function repackOoxml(originalBytes: Uint8Array, patches: OoxmlParts): Uin
 export interface PartsIntegrity {
   total: number;
   identical: number;
-  /** "~path"=改动 / "+path"=新增 / "-path"=丢失 */
+  /** "~path" = modified / "+path" = added / "-path" = missing */
   changed: string[];
 }
 
-/** 对比两份 OOXML 的部件字节完整性(写回后防毁容自检)。 */
+/** Compare byte-level part integrity of two OOXML files (post-writeback corruption self-check). */
 export function comparePartsIntegrity(before: Uint8Array, after: Uint8Array): PartsIntegrity {
   const a = unzipSync(before);
   const b = unzipSync(after);

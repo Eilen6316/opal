@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import type { DocRev } from '@otterpatch/core';
 import { buildDrawioVerifier, drawioDialect, type ProposeRequest } from './index.js';
 
-// 画板上下文里已有两个节点 n1/n2 与一条边 e1(校验器按"id 出现在上下文文本中"判存在)
+// Board context already contains two nodes n1/n2 and one edge e1 (the verifier treats "id appears in the context text" as existence)
 const BOARD = '节点 id=n1 label=开始; 节点 id=n2 label=处理; 边 id=e1 n1→n2';
 const reqFor = (): ProposeRequest => ({ hostId: 'h1', format: 'drawio', intent: 'x', baseRev: 0 as DocRev, anchors: [], context: BOARD });
 const cs = (ops: unknown[]) => drawioDialect.buildChangeSet(reqFor(), { plan: 'p', ops } as never);

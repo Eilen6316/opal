@@ -1,6 +1,6 @@
 /**
- * 端到端:自然语言意图 → drawio ChangeSet(Mock 模型,drawio 方言)→ diagram 级外科写回。
- * 证明"上游 Agent(按格式分发)"与"下游 drawio 写回"接成一条线。
+ * End-to-end: natural-language intent → drawio ChangeSet (mock model, drawio dialect) → diagram-level surgical writeback.
+ * Proves the upstream Agent (dispatching by format) and the downstream drawio writeback connect into one pipeline.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

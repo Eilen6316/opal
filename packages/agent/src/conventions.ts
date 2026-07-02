@@ -1,8 +1,10 @@
 /**
- * 分层约定层 —— 类 AGENTS.md(agents.md 开放标准):把"持久的排版/格式/风格约定"分层喂给 Agent,
- * 约束它产出的 ChangeSet 风格。层级:全局(用户偏好)→ 工作区(本套报表/品牌规范)→ 单文档(override)。
- * 拼接顺序 global→workspace→document(就近在后,提示模型就近覆盖)。与 SKILL.md(能力库)互补:
- * 技能=会做什么,约定=按什么规矩做。
+ * Layered conventions — AGENTS.md-like (agents.md open standard): feeds persistent
+ * layout/format/style conventions to the Agent in layers, constraining the style of the
+ * ChangeSets it produces. Layers: global (user preferences) → workspace (report-set/brand
+ * guidelines) → document (override). Concatenation order is global→workspace→document
+ * (nearest scope last, prompting the model to let nearer scopes override). Complements
+ * SKILL.md (capability library): skills = what it can do, conventions = the rules it follows.
  */
 export type ConventionScope = 'global' | 'workspace' | 'document';
 
@@ -14,7 +16,7 @@ export interface Convention {
   source?: string;
 }
 
-/** 从一份 AGENTS.md / 约定 Markdown 造一个 Convention(去掉可能的 frontmatter,取正文)。 */
+/** Build a Convention from an AGENTS.md / convention Markdown file (strips any frontmatter, keeps the body). */
 export function conventionFromMarkdown(md: string, scope: ConventionScope, source?: string): Convention {
   const body = md.replace(/\r\n/g, '\n').replace(/^---\n[\s\S]*?\n---\n?/, '').trim();
   return { scope, text: body, source };
@@ -36,7 +38,7 @@ export class ConventionStack {
     return this.layers;
   }
 
-  /** 拼成可注入系统提示的片段(global→workspace→document)。无内容返回空串。 */
+  /** Render as a snippet injectable into the system prompt (global→workspace→document). Returns '' if empty. */
   render(): string {
     const ordered = this.layers
       .filter((l) => l.text.trim())

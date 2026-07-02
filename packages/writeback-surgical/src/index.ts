@@ -1,13 +1,15 @@
 /**
- * SurgicalOoxmlWriteback —— 外科手术写回(首选后端)。
- * 只重写被编辑命中的部件,其余字节级原样透传。算法已用真实 .docx 实测(30/31 部件不变)。
+ * SurgicalOoxmlWriteback — surgical writeback (preferred backend).
+ * Rewrites only the parts hit by edits; all other bytes pass through untouched. Algorithm
+ * validated against a real .docx (30/31 parts byte-identical).
  *
- * 分工:
- *  - 本模块负责【已验证的 repack + 完整性 verify】(格式无关);
- *  - "ChangeSet → 哪些部件、改成什么 XML" 的知识由格式适配器以 OoxmlPatchCompiler 注入
- *    (Univer 知道 setValue 落到 xl/worksheets/sheetN.xml 的哪个 cell;Word 适配器知道 run 怎么改)。
+ * Division of labor:
+ *  - This module owns the [verified repack + integrity verify] (format-agnostic);
+ *  - Knowledge of "ChangeSet → which parts, what new XML" is injected by format adapters
+ *    as an OoxmlPatchCompiler (Univer knows which cell in xl/worksheets/sheetN.xml a
+ *    setValue lands on; the Word adapter knows how to rewrite a run).
  *
- * 详见 .work/abstraction-layer.md §7。
+ * See .work/abstraction-layer.md §7.
  */
 import type {
   ChangeSet,
@@ -23,24 +25,24 @@ import type {
 } from '@otterpatch/core';
 import { comparePartsIntegrity, repackOoxml, type OoxmlParts } from './ooxml.js';
 
-/** 逐 edit 写回结果:哪些真落了盘、哪些被丢弃(诚实写回)。 */
+/** Per-edit writeback outcome: which edits actually landed on disk vs. were dropped (honest writeback). */
 export interface OoxmlPatchReport {
   applied: EditId[];
   dropped: Array<{ editId: EditId; reason: string }>;
 }
-/** 编译器的富返回:部件补丁 + 逐 edit 报告。也允许只返回 OoxmlParts(老编译器,视为全部已写)。 */
+/** Rich compiler result: part patches + per-edit report. Bare OoxmlParts is also allowed (legacy compilers; treated as all-applied). */
 export interface OoxmlPatchResult {
   parts: OoxmlParts;
   report?: OoxmlPatchReport;
 }
 
-/** 把 ChangeSet 编译成"部件 → 新字节"(可附逐 edit 报告);由格式适配器提供。 */
+/** Compiles a ChangeSet into "part → new bytes" (optionally with a per-edit report); supplied by format adapters. */
 export type OoxmlPatchCompiler = (
   cs: ChangeSet,
   original: Uint8Array,
 ) => Promise<OoxmlParts | OoxmlPatchResult>;
 
-/** 区分富返回(OoxmlPatchResult)与裸 OoxmlParts:前者有非 Uint8Array 的 .parts。 */
+/** Distinguishes rich result (OoxmlPatchResult) from bare OoxmlParts: the former has a non-Uint8Array .parts. */
 function asPatchResult(r: OoxmlParts | OoxmlPatchResult): OoxmlPatchResult {
   if ('parts' in r && !(r.parts instanceof Uint8Array)) return r as OoxmlPatchResult;
   return { parts: r as OoxmlParts };
@@ -52,7 +54,7 @@ export class SurgicalOoxmlWriteback implements WritebackBackend {
 
   constructor(private readonly compile: OoxmlPatchCompiler) {}
 
-  /** 跨部件大重排(插行联动公式引用/图表数据源/透视缓存)超出外科补丁 → 交路由降级。 */
+  /** Cross-part structural reflow (row insert rippling into formula refs / chart data sources / pivot caches) exceeds surgical patching → let the router downgrade. */
   canHandle(cs: ChangeSet): { ok: boolean; reason?: string } {
     const structural = cs.edits.some((e) => e.op.family === 'structure');
     if (structural) {
@@ -62,10 +64,10 @@ export class SurgicalOoxmlWriteback implements WritebackBackend {
   }
 
   supports(_op: EditOpKind, _part: OoxmlPart): boolean {
-    return true; // MVP 宽松;细粒度由 compiler 决定
+    return true; // permissive for MVP; fine-grained decisions belong to the compiler
   }
 
-  /** 只重写目标部件、其余字节原样,重新打包,并自检完整性。 */
+  /** Rewrite only the targeted parts, keep all other bytes as-is, repack, and self-check integrity. */
   async commit(cs: ChangeSet, doc: DocHandle): Promise<WritebackResult> {
     const original = doc.bytes;
     if (!original) throw new Error('SurgicalOoxmlWriteback.commit: DocHandle.bytes required');
@@ -75,14 +77,14 @@ export class SurgicalOoxmlWriteback implements WritebackBackend {
     const integrity = comparePartsIntegrity(original, bytes);
     const expected = new Set(Object.keys(patches));
     const drift = integrity.changed
-      .filter((c) => !((c.startsWith('~') || c.startsWith('+')) && expected.has(c.slice(1)))) // 预期内的改动/新增不算 drift
+      .filter((c) => !((c.startsWith('~') || c.startsWith('+')) && expected.has(c.slice(1)))) // expected changes/additions don't count as drift
       .map((c) => ({ part: c.slice(1), kind: 'content' as const, note: `unexpected: ${c}` }));
 
     const fidelity: FidelityReport = {
       score: integrity.total === 0 ? 1 : integrity.identical / integrity.total,
       drift,
     };
-    // 诚实写回:被丢弃的 edit ⇒ ok=false,绝不在丢了改动时报成功。
+    // Honest writeback: any dropped edit ⇒ ok=false; never report success while changes were lost.
     const dropped = report?.dropped ?? [];
     const applied = report?.applied ?? cs.edits.map((e) => e.id);
     return {
@@ -95,7 +97,7 @@ export class SurgicalOoxmlWriteback implements WritebackBackend {
     };
   }
 
-  /** 回读比对(防毁容);校验不过则事务不进入 committed。 */
+  /** Read-back comparison (guards against document corruption); if verification fails, the transaction never reaches committed. */
   async verify(before: DocHandle, after: DocHandle, _cs: ChangeSet): Promise<FidelityReport> {
     if (!before.bytes || !after.bytes) {
       throw new Error('SurgicalOoxmlWriteback.verify: before/after bytes required');

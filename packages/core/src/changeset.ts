@@ -1,7 +1,7 @@
 /**
- * ChangeSet + EditOp —— 唯一的"编辑"货币。
- * 任何来源(Agent/技能/示范/人工)都只产 ChangeSet;通过 AnchorId 寻址。
- * 详见 .work/abstraction-layer.md §2。
+ * ChangeSet + EditOp — the sole "edit" currency.
+ * Every source (agent/skill/demonstration/human) produces only ChangeSets; addressed via AnchorId.
+ * See .work/abstraction-layer.md §2.
  */
 import type { AnchorId, DocRev, LogicalAnchor, MutationLog } from './anchor.js';
 import type { DiffView } from './diff.js';
@@ -40,35 +40,35 @@ export interface AbstractStyle {
   underline?: boolean;
   color?: string;
   bgColor?: string;
-  font?: string; // 字体名(如 宋体 / Arial)
-  size?: number; // 字号(磅)
+  font?: string; // font name (e.g. 宋体 / Arial)
+  size?: number; // font size in points
   align?: 'left' | 'center' | 'right' | 'justify';
   numberFormat?: string;
-  /** Word 段落级:行距倍数(1 / 1.5 / 2 …)。Excel 忽略。 */
+  /** Word paragraph-level: line-spacing multiplier (1 / 1.5 / 2 …). Ignored by Excel. */
   lineSpacing?: number;
-  /** Word 段落级:段落样式(标题/正文/引用)。Excel 忽略。 */
+  /** Word paragraph-level: block style (heading/body/quote). Ignored by Excel. */
   block?: 'h1' | 'h2' | 'h3' | 'p' | 'blockquote';
-  /** Word 页面级(须 all=true):分栏数 1/2/3 —— IEEE 双栏这类版式的关键参数。 */
+  /** Word page-level (requires all=true): column count 1/2/3 — key parameter for layouts like IEEE two-column. */
   columns?: number;
-  /** Word 页面级(须 all=true):页边距预设。 */
+  /** Word page-level (requires all=true): margin preset. */
   margin?: 'narrow' | 'normal' | 'moderate' | 'wide';
-  /** Word 页面级(须 all=true):纸张方向。 */
+  /** Word page-level (requires all=true): paper orientation. */
   orient?: 'portrait' | 'landscape';
-  /** 条件格式等高层意图,适配器决定原生 or 降级模拟。 */
+  /** High-level intents like conditional formatting; adapter decides native vs degraded emulation. */
   conditional?: { rule: string; format: AbstractStyle };
 }
 
-/** family(粗、稳定)= 能力协商 + diff 归类;kind(细)= 真实底座 API 绑定。 */
+/** family (coarse, stable) = capability negotiation + diff grouping; kind (fine) = binding to the real host API. */
 export type OpFamily = 'value' | 'text' | 'style' | 'structure' | 'object' | 'raw';
 
 export type EditOp =
-  // 格式无关核心
+  // Format-agnostic core
   | { family: 'value'; kind: 'setValue'; value: CellValue }
   | { family: 'text'; kind: 'replaceText'; text: string }
   | { family: 'text'; kind: 'insertText'; text: string; at: 'start' | 'end' }
   | { family: 'value'; kind: 'deleteRange' }
   | { family: 'style'; kind: 'setStyle'; style: AbstractStyle }
-  // Excel(grid)扩展
+  // Excel (grid) extensions
   | { family: 'value'; kind: 'setFormula'; formula: string }
   | { family: 'style'; kind: 'setNumberFormat'; pattern: string }
   | { family: 'structure'; kind: 'insertRows'; count: number; before: boolean }
@@ -83,33 +83,33 @@ export type EditOp =
   | { family: 'object'; kind: 'insertChart'; chartType: 'bar' | 'line' | 'pie'; title: string; range?: string; categories?: string[]; series?: { name: string; data: number[] }[]; anchor?: string }
   | { family: 'style'; kind: 'conditionalFormat'; when: string; v1?: number | string; v2?: number; style: AbstractStyle }
   | { family: 'style'; kind: 'dataValidation'; rule: 'list' | 'numberBetween' | 'numberGreaterThan' | 'checkbox' | 'dateBetween'; list?: string[]; min?: number; max?: number; v?: number }
-  // Word(flow)扩展
+  // Word (flow) extensions
   | { family: 'style'; kind: 'setMark'; mark: MarkSpec }
   | { family: 'style'; kind: 'setParagraphStyle'; styleName: string }
-  // PPT(object)扩展(后续)
+  // PPT (object) extensions (future)
   | { family: 'object'; kind: 'moveObject'; box: Partial<BoxRect> }
   | { family: 'object'; kind: 'setObjectProps'; props: Record<string, unknown> }
-  // 增删对象(drawio/PPT):addObject 的 target=父/容器锚点,payload 由适配器解释(如 drawio 的 mxCell);
-  // deleteObject 的 target 锚点指向被删对象(drawio 级联删边)。
+  // Add/remove objects (drawio/PPT): for addObject, target = parent/container anchor; payload is adapter-interpreted (e.g. drawio's mxCell);
+  // for deleteObject, target anchor points at the object being deleted (drawio cascades edge deletion).
   | { family: 'object'; kind: 'addObject'; payload: unknown }
   | { family: 'object'; kind: 'deleteObject' }
-  // 逃生舱:携带某底座原生 op,必须 CapabilitySet 显式放行 + 强制随附 inverse
+  // Escape hatch: carries a host-native op; must be explicitly allowed by CapabilitySet + inverse is mandatory
   | { family: 'raw'; kind: 'rawHost'; hostId: string; payload: unknown };
 
 export type EditOpKind = EditOp['kind'];
 
 export interface Edit {
   readonly id: EditId;
-  readonly target: AnchorId; // 所有编辑都经锚点寻址
+  readonly target: AnchorId; // all edits are addressed via anchors
   readonly op: EditOp;
-  readonly inverse?: EditOp; // Agent 预填或 shadowApply 时自动捕获 → 支撑逐块撤销
+  readonly inverse?: EditOp; // pre-filled by agent or auto-captured during shadowApply → enables per-block undo
 }
 
 export interface ChangeSet {
   readonly id: ChangeSetId;
   readonly hostId: string;
-  readonly baseRev: DocRev; // 提交时若 live != baseRev 必须先 rebase
-  readonly anchors: Record<AnchorId, LogicalAnchor>; // 锚点表:rebase 一处迁移、N op 跟随
+  readonly baseRev: DocRev; // on commit, if live != baseRev a rebase is required first
+  readonly anchors: Record<AnchorId, LogicalAnchor>; // anchor table: rebase migrates once, N ops follow
   readonly origin: ChangeOrigin;
   readonly meta: ChangeMeta;
   readonly edits: Edit[];
@@ -125,9 +125,10 @@ export interface ValidationReport {
 }
 
 /**
- * 影子校验结果 —— 把提案应用到影子、重算后回喂模型的"观察":
- *  ok=true ⇒ 无明显问题、无需修复;ok=false ⇒ report 内含重算值 + 问题清单,供模型据此修正。
- * 支撑 propose→observe→repair 闭环。
+ * Shadow-verification result — the "observation" fed back to the model after applying the proposal
+ * to the shadow and recalculating: ok=true ⇒ no obvious issues, no repair needed; ok=false ⇒ report
+ * contains recalculated values + issue list for the model to fix against.
+ * Supports the propose→observe→repair loop.
  */
 export interface VerifyReport {
   ok: boolean;

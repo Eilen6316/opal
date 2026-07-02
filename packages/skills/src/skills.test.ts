@@ -19,8 +19,8 @@ test('parseSkillMd: 解析 frontmatter + 折叠 description + 正文', () => {
   const c = parseSkillMd(SKILL_MD, 'fixture');
   assert.equal(c.name, 'academic-paper-docx');
   assert.match(c.description, /中文学术论文/);
-  assert.deepEqual(c.formats, ['word', 'docx']); // 从 name 推断
-  assert.ok(c.keywords.includes('python-docx')); // 从“关键词:”抽取
+  assert.deepEqual(c.formats, ['word', 'docx']); // inferred from name
+  assert.ok(c.keywords.includes('python-docx')); // extracted from the "关键词:" line
   assert.match(c.instructions ?? '', /正文说明/);
   assert.equal(c.source, 'fixture');
 });
@@ -38,7 +38,7 @@ test('专用技能从外部 SKILL.md 安装后即可命中', () => {
   const lib = defaultLibrary();
   const card = lib.install(SKILL_MD, 'user:SKILL_HUB');
   assert.equal(card.name, 'academic-paper-docx');
-  // 安装后,论文+三线表意图命中专用技能(格式 + 关键词双命中,胜过通用 docx)
+  // After install, a paper + three-line-table intent hits the specialized skill (format + keyword double match beats the generic docx skill)
   assert.equal(lib.match('写课程论文 三线表', 'word')[0]!.name, 'academic-paper-docx');
 });
 
@@ -59,6 +59,6 @@ test('add 去重 + toMcpTools', () => {
   lib.add(BUILTIN_SKILLS[0]!).add(BUILTIN_SKILLS[0]!);
   assert.equal(lib.all().length, 1);
   const tools = defaultLibrary().toMcpTools();
-  assert.equal(tools.length, BUILTIN_SKILLS.length + PLAYBOOK_SKILLS.length); // 通用卡片 + 全部打法手册
+  assert.equal(tools.length, BUILTIN_SKILLS.length + PLAYBOOK_SKILLS.length); // generic cards + all playbooks
   assert.ok(tools.every((t) => t.name.startsWith('skill__')));
 });

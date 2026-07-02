@@ -1,16 +1,16 @@
 /**
- * Word 文档 Agent 的"取数"共享件 —— 与 sheet-tools 同构、厂商无关,供两条模型通道复用。
- * 解决 Word 场景最大的感知短板:上下文里每段正文有截断,模型"看不全"就谈不上专家级诊断。
- * 四个只读工具:read_blocks(按段取全文)/ find_text(全文检索)/ get_outline(大纲)/ get_style_usage(样式分布)。
- * 快照由宿主(桌面/CLI)在请求里上送,serve 不回传给模型 prompt,只供工具按需取。
+ * Shared "data-fetching" layer for the Word document Agent — isomorphic to sheet-tools, vendor-agnostic, reused by both model channels.
+ * Addresses the biggest perception gap in the Word scenario: paragraph text in the context is truncated, and a model that "can't see everything" cannot do expert-level diagnosis.
+ * Four read-only tools: read_blocks (full text by paragraph range) / find_text (full-text search) / get_outline (heading outline) / get_style_usage (style distribution).
+ * The snapshot is uploaded by the host (desktop/CLI) with the request; serve never feeds it back into the model prompt — tools fetch from it on demand.
  */
 import type { ToolDef } from './sheet-tools.js';
 import { READ_BLOCKS_DESC, FIND_TEXT_DESC, GET_OUTLINE_DESC, GET_STYLE_USAGE_DESC } from './prompts/index.js';
 
-/** 一段(块)的快照:样式名 + 全文 + 关键排版属性。idx 即数组下标(0 基,展示时 +1)。 */
+/** Snapshot of one paragraph (block): style name + full text + key layout properties. idx is the array index (0-based; +1 when displayed). */
 export interface DocBlock {
-  style: string; // '标题1' | '标题2' | '标题3' | '正文' | '引用' | '列表项' …
-  text: string; // 该段完整纯文本(清样投影:不含未定修订的旧文)
+  style: string; // Literal style values, e.g. '标题1' | '标题2' | '标题3' | '正文' | '引用' | '列表项' …
+  text: string; // Full plain text of the paragraph (clean-copy projection: excludes old text from pending revisions)
   font?: string;
   size?: number; // pt
   align?: string;
@@ -50,7 +50,7 @@ export const DOC_TOOL_DEFS: ToolDef[] = [READ_BLOCKS_DEF, FIND_TEXT_DEF, GET_OUT
 
 const clip = (s: string, n = 60): string => (s.length > n ? s.slice(0, n) + '…' : s);
 
-/** 按段号区间读全文(1 基,含端点);段数带上限防一口气吞全书。 */
+/** Read full text by paragraph-number range (1-based, inclusive); block count is capped to avoid swallowing the whole document in one call. */
 export function readBlocks(doc: DocSnapshot, from: number, to?: number, maxBlocks = 40): string {
   const a = Math.max(1, Math.floor(from));
   const b = Math.min(doc.blocks.length, Math.floor(to ?? from));
@@ -65,7 +65,7 @@ export function readBlocks(doc: DocSnapshot, from: number, to?: number, maxBlock
   return lines.join('\n');
 }
 
-/** 全文检索:返回每处命中的段号 + 前后文摘录;命中过多时截断并提示。 */
+/** Full-text search: returns each hit's paragraph number + surrounding excerpt; truncates with a note when there are too many hits. */
 export function findText(doc: DocSnapshot, pattern: string, maxHits = 20): string {
   const p = (pattern || '').trim();
   if (!p) return '(pattern 为空)';
@@ -89,7 +89,7 @@ export function findText(doc: DocSnapshot, pattern: string, maxHits = 20): strin
   return head + '\n' + hits.join('\n') + (total > maxHits ? `\n(只列前 ${maxHits} 处)` : '');
 }
 
-/** 文档大纲:标题层级树 + 越级诊断。 */
+/** Document outline: heading-level tree + skipped-level diagnostics. */
 export function getOutline(doc: DocSnapshot): string {
   const heads: Array<{ i: number; lv: number; text: string }> = [];
   for (let i = 0; i < doc.blocks.length; i++) {
@@ -104,7 +104,7 @@ export function getOutline(doc: DocSnapshot): string {
   return `大纲(共 ${heads.length} 个标题 / ${doc.blocks.length} 段):\n` + lines.join('\n') + (skips.length ? '\n⚠ 层级越级: ' + skips.join('; ') : '');
 }
 
-/** 样式使用分布:每种 样式×字体×字号×对齐×行距 组合的段数与示例段号 —— 排版审计的原料。 */
+/** Style usage distribution: paragraph count and sample paragraph numbers for each style×font×size×alignment×line-spacing combination — raw material for layout audits. */
 export function getStyleUsage(doc: DocSnapshot): string {
   const groups = new Map<string, number[]>();
   for (let i = 0; i < doc.blocks.length; i++) {
@@ -120,7 +120,7 @@ export function getStyleUsage(doc: DocSnapshot): string {
   return `样式使用分布(${groups.size} 种组合 / ${doc.blocks.length} 段):\n` + rows.join('\n') + hint;
 }
 
-/** 按工具名执行 Word 只读工具,返回回喂模型的文本;非本组工具返回 null(由调用方继续路由)。 */
+/** Execute a Word read-only tool by name; returns text to feed back to the model. Returns null for tools outside this group (caller continues routing). */
 export function execDocTool(name: string, args: { from?: number; to?: number; pattern?: string }, doc?: DocSnapshot): string | null {
   if (name === 'read_blocks') return doc ? readBlocks(doc, Number(args.from ?? 1), args.to != null ? Number(args.to) : undefined) : '(无文档快照)';
   if (name === 'find_text') return doc ? findText(doc, String(args.pattern ?? '')) : '(无文档快照)';

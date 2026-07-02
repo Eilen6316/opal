@@ -1,5 +1,5 @@
 /**
- * 端到端(through runtime):意图 → ChangeSet(Mock)→ diff → 外科写回 .xlsx,并断言事件流齐发。
+ * End-to-end (through runtime): intent → ChangeSet (mocked) → diff → surgical writeback to .xlsx, asserting the full event stream is emitted.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

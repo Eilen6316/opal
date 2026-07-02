@@ -1,7 +1,7 @@
 /**
- * Diff —— 三级粒度可审阅结构(batch / block / leaf)。
- * shadowApply 产出 DiffNode 树;每节点可独立接受/拒绝/回滚;接受子集 project() 成新 ChangeSet 再提交。
- * 详见 .work/abstraction-layer.md §3。
+ * Diff — three-level reviewable structure (batch / block / leaf).
+ * shadowApply produces a DiffNode tree; each node can be independently accepted/rejected/rolled back;
+ * the accepted subset is project()-ed into a new ChangeSet and committed. See .work/abstraction-layer.md §3.
  */
 import type { LogicalAnchor } from './anchor.js';
 import type {
@@ -26,20 +26,20 @@ export type PreviewValue =
 export interface DiffRenderHint {
   badge: 'add' | 'remove' | 'modify' | 'move' | 'conflict';
   color?: string;
-  label?: string; // 例:"=SUM 公式" / "改为粗体"
-  inlineSpans?: Array<{ from: number; to: number; op: 'ins' | 'del' }>; // flow 文本字符级
+  label?: string; // e.g. "=SUM formula" / "set to bold"
+  inlineSpans?: Array<{ from: number; to: number; op: 'ins' | 'del' }>; // character-level for flow text
 }
 
 export interface DiffNode {
   readonly id: DiffNodeId;
   readonly level: DiffLevel;
-  readonly anchor: LogicalAnchor; // 覆盖层定位高亮 = toPixels(anchor)
+  readonly anchor: LogicalAnchor; // overlay highlight position = toPixels(anchor)
   readonly editIds: readonly EditId[];
   readonly before: PreviewValue;
-  readonly after: PreviewValue; // 含公式重算/重排结果
+  readonly after: PreviewValue; // includes formula recalculation / reflow results
   readonly children: readonly DiffNode[];
   readonly render: DiffRenderHint;
-  state: DiffDecision; // 可变:用户逐块决策
+  state: DiffDecision; // mutable: user decides per block
 }
 
 export interface DiffView {
@@ -51,12 +51,12 @@ export interface DiffView {
 
 export interface DiffController {
   view(): DiffView;
-  /** 向上/下传播:父 reject→子全 reject;子全 accept→父 accept。 */
+  /** Propagates up/down: parent reject → all children rejected; all children accept → parent accepted. */
   setDecision(node: DiffNodeId, d: DiffDecision): void;
   acceptAll(): void;
   rejectAll(): void;
-  /** 取已接受叶子的 edits 重组 ChangeSet(再走 validate→shadowApply)。 */
+  /** Reassemble a ChangeSet from the edits of accepted leaves (then re-run validate→shadowApply). */
   project(): ChangeSet;
-  /** 已提交后单块撤销:用对应 inverse 局部回滚。 */
+  /** Undo a single block after commit: partial rollback via its corresponding inverse. */
   rollback(node: DiffNodeId): Promise<void>;
 }

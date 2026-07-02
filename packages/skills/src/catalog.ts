@@ -1,8 +1,11 @@
 /**
- * 内置技能目录 —— 只放【通用能力技能】(操作某格式 / 跨场景人人都要的能力)。
- * 判定:编辑该格式的用户多数都需要 → 内置;领域/模板/地区/行业特定(如学术论文模板、
- * 公司周报、投行模型)→ 不内置,由用户从外部 SKILL.md 安装(SkillLibrary.install)。
- * 安全:内置默认可信;外部技能(可能带 L2 脚本)需沙箱 + 安装前显式信任。
+ * Built-in skill catalog — only holds general-capability skills (operating on a file format /
+ * abilities everyone needs across scenarios). Criterion: if most users editing that format need
+ * it → built-in; domain/template/region/industry-specific skills (e.g. academic paper templates,
+ * company weekly reports, investment-banking models) → not built-in; users install them from
+ * external SKILL.md files (SkillLibrary.install).
+ * Security: built-ins are trusted by default; external skills (which may carry L2 scripts)
+ * require sandboxing + explicit trust before installation.
  */
 import type { SkillCard } from './parse.js';
 import { SkillLibrary } from './library.js';
@@ -48,7 +51,7 @@ export const BUILTIN_SKILLS: SkillCard[] = [
   },
 ];
 
-/** 带内置目录的技能库:通用能力卡片 + 领域打法手册(playbook,带 L1 正文供 load_skill 拉取)。专用技能请 lib.install(SKILL.md 文本) 自行加载。 */
+/** Skill library preloaded with the built-in catalog: general-capability cards + domain playbooks (with L1 bodies fetchable via load_skill). Load specialized skills yourself via lib.install(SKILL.md text). */
 export function defaultLibrary(): SkillLibrary {
   return new SkillLibrary([...BUILTIN_SKILLS, ...PLAYBOOK_SKILLS]);
 }

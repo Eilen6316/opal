@@ -1,9 +1,12 @@
 /**
- * OtterPatchRuntime —— headless 编排器,把"上游 Agent(propose)"和"下游外科写回(commit)"接成一条线,
- * 中间产出可审阅 diff,并对每个阶段发结构化事件。MCP server / CLI / 桌面都复用这一个内核。
+ * OtterPatchRuntime — headless orchestrator wiring the upstream Agent (propose) to the downstream
+ * surgical writeback (commit), producing a reviewable diff in between and emitting structured events
+ * for each stage. The MCP server / CLI / desktop all reuse this single kernel.
  *
- * 端到端:propose(intent → ChangeSet) → diff(可审阅) → 用户接受子集 → commit(外科写回 → 新字节 + 保真报告)。
- * 写回后端按 format 路由:excel/xlsx → 外科 OOXML(Univer 编译器);drawio → 单 XML 外科。
+ * End to end: propose (intent → ChangeSet) → diff (reviewable) → user accepts a subset → commit
+ * (surgical writeback → new bytes + fidelity report).
+ * Writeback backends are routed by format: excel/xlsx → surgical OOXML (Univer compiler);
+ * drawio → single-XML surgical edit.
  */
 import { Agent, buildDocVerifier, buildDrawioVerifier } from '@otterpatch/agent';
 import type { AgentResponse, ChangeSetVerifier, ModelClient, ProposeRequest, RespondOptions, StreamEvent } from '@otterpatch/agent';
@@ -23,7 +26,7 @@ export interface CommitInput {
   format: string;
   bytes: Uint8Array;
   changeSet: ChangeSet;
-  /** 仅提交这些 edit(逐块接受的结果);省略 = 全部接受。 */
+  /** Commit only these edits (result of per-block acceptance); omitted = accept all. */
   acceptedEditIds?: string[];
 }
 
@@ -58,7 +61,7 @@ export class OtterPatchRuntime {
     };
   }
 
-  /** 订阅事件流;返回取消订阅函数。 */
+  /** Subscribe to the event stream; returns an unsubscribe function. */
   on(cb: OtterPatchEventListener): () => void {
     this.listeners.add(cb);
     return () => {
@@ -69,11 +72,11 @@ export class OtterPatchRuntime {
     for (const l of this.listeners) l(e);
   }
 
-  /** 注册/覆盖某格式的写回后端(Word 红线 / PDF 等后续接入)。 */
+  /** Register/override the writeback backend for a format (Word redline / PDF etc. to be added later). */
   registerWriteback(format: string, make: () => WritebackBackend): void {
     this.backends[format] = make;
   }
-  /** 注册/覆盖某格式的影子校验器(与 backends 同款注册表;ppt/pdf 等后续接入)。 */
+  /** Register/override the shadow verifier for a format (same registry pattern as backends; ppt/pdf etc. later). */
   registerVerifier(format: string, make: (req: ProposeRequest) => ChangeSetVerifier | undefined): void {
     this.verifiers[format] = make;
   }
@@ -81,7 +84,7 @@ export class OtterPatchRuntime {
     return Object.keys(this.backends);
   }
 
-  /** 意图 → 受约束 ChangeSet(注入内置技能库;BYOK model 由调用方提供)。 */
+  /** Intent → constrained ChangeSet (injects the built-in skill library; BYOK model supplied by the caller). */
   async propose(req: ProposeRequest, model: ModelClient): Promise<ChangeSet> {
     this.emit({ type: 'propose:start', format: req.format, intent: req.intent });
     try {
@@ -95,15 +98,15 @@ export class OtterPatchRuntime {
     }
   }
 
-  /** 提案产出后的影子校验(按 format 走注册表):Excel 重算/越界;Word 锚点可落地;drawio 拓扑完整。
-   *  外面再包一层收尾语义自检(withFinalSelfCheck)。 */
+  /** Shadow verification after a proposal is produced (routed by format via the registry): Excel recalculation/out-of-bounds; Word anchors resolvable; drawio topology intact.
+   *  Wrapped in an outer final semantic self-check (withFinalSelfCheck). */
   private verifyOpts(req: ProposeRequest): RespondOptions | undefined {
     const structural = this.verifiers[req.format]?.(req);
     if (!structural) return undefined;
     return { verify: withFinalSelfCheck(structural), maxRepairs: 2 };
   }
 
-  /** 智能路由:模型自行决定『回答问题』还是『提出改动』。 */
+  /** Smart routing: the model decides on its own whether to answer a question or propose changes. */
   async respond(req: ProposeRequest, model: ModelClient): Promise<AgentResponse> {
     this.emit({ type: 'propose:start', format: req.format, intent: req.intent });
     try {
@@ -119,7 +122,7 @@ export class OtterPatchRuntime {
     }
   }
 
-  /** 流式路由:把 reasoning/answer 增量通过 onEvent 吐出。 */
+  /** Streaming routing: emits reasoning/answer deltas via onEvent. */
   async respondStream(req: ProposeRequest, model: ModelClient, onEvent: (e: StreamEvent) => void): Promise<AgentResponse> {
     this.emit({ type: 'propose:start', format: req.format, intent: req.intent });
     try {
@@ -135,14 +138,14 @@ export class OtterPatchRuntime {
     }
   }
 
-  /** ChangeSet → 可审阅 diff。 */
+  /** ChangeSet → reviewable diff. */
   diff(cs: ChangeSet): OtterPatchDiff {
     const d = buildDiff(cs);
     this.emit({ type: 'diff:done', diff: d });
     return d;
   }
 
-  /** 接受子集 → 外科写回 → 新字节 + 保真报告。 */
+  /** Accepted subset → surgical writeback → new bytes + fidelity report. */
   async commit(input: CommitInput): Promise<WritebackResult> {
     const make = this.backends[input.format];
     if (!make) throw new Error(`OtterPatchRuntime: no writeback backend for format "${input.format}"`);
@@ -170,9 +173,12 @@ function errMsg(err: unknown): string {
 }
 
 /**
- * 收尾语义自检:大改动(≥minEdits 条)结构校验通过后,再让模型把整组改动【作为整体】复盘一次
- * (完整性/冲突/更优解)——满意则原样重交、不满意交修正版。只对大提案多花一轮,
- * 专治"逐条都对、整体却没达成意图"。每个请求只触发一次(闭包记账)。
+ * Final semantic self-check: for large changesets (≥ minEdits edits) that pass structural
+ * verification, have the model review the whole edit group as a unit (completeness / conflicts /
+ * better alternatives) — resubmit unchanged if satisfied, or submit a corrected version.
+ * Costs one extra round only for large proposals; targets the failure mode where each edit is
+ * individually correct but the set as a whole misses the intent. Fires at most once per request
+ * (tracked via closure state).
  */
 export function withFinalSelfCheck(structural: ChangeSetVerifier, minEdits = 5): ChangeSetVerifier {
   let selfChecked = false;

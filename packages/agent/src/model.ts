@@ -1,49 +1,49 @@
 /**
- * Agent 模型层(格式无关):意图 + 选区上下文 → 受约束 ChangeSet。
- * 不同 host 格式(Excel/drawio/…)有各自的 HostDialect:系统提示 + 工具 schema + ChangeSet 构造,
- * 由 ProposeRequest.format 选择。模型实现(Claude/OpenAI 兼容/Mock)只负责
- * "按 dialect 调模型 → 拿原始提案 → dialect.buildChangeSet",绝不让模型直接产 OOXML/XML。
+ * Agent model layer (format-agnostic): intent + selection context → constrained ChangeSet.
+ * Each host format (Excel/drawio/...) has its own HostDialect: system prompt + tool schema + ChangeSet construction,
+ * selected by ProposeRequest.format. Model implementations (Claude/OpenAI-compatible/Mock) only do
+ * "call model per dialect → get raw proposal → dialect.buildChangeSet"; the model never emits OOXML/XML directly.
  */
 import type { ChangeSet, DocRev, LogicalAnchor, VerifyReport } from '@otterpatch/core';
 
 export interface ProposeRequest {
   hostId: string;
-  format: string; // 'excel' | 'drawio' | …(选 dialect)
+  format: string; // 'excel' | 'drawio' | ... (selects the dialect)
   intent: string;
   baseRev: DocRev;
-  anchors: LogicalAnchor[]; // 用户圈选(像素已转锚点)
-  context: string; // 选区只读快照,喂给模型
+  anchors: LogicalAnchor[]; // User selection (pixels already converted to anchors)
+  context: string; // Read-only snapshot of the selection, fed to the model
   sessionId?: string;
-  /** 整张表全量数据(本地传给 serve,不直接塞进模型 prompt;供 read_range/aggregate 工具按需取数)。 */
+  /** Full sheet data (passed locally to serve, not stuffed into the model prompt; consumed on demand by the read_range/aggregate tools). */
   sheet?: { a1: string; values: unknown[][] };
-  /** Word 文档全量快照(逐段全文+样式;同样不进 prompt,供 read_blocks/find_text/get_outline/get_style_usage 按需取)。 */
+  /** Full Word document snapshot (per-paragraph text + styles; likewise not in the prompt, fetched on demand via read_blocks/find_text/get_outline/get_style_usage). */
   doc?: { blocks: Array<{ style: string; text: string; font?: string; size?: number; align?: string; lineSpacing?: number }> };
-  /** 多轮对话历史(用户消息 + Agent 回答/改动摘要),让本次请求关联上下文。 */
+  /** Multi-turn conversation history (user messages + agent answers/change summaries) so this request carries context. */
   history?: Array<{ role: 'user' | 'assistant'; content: string }>;
 }
 
-/** 一种 host 格式的"方言":系统提示 + 工具(JSON Schema)+ 原始提案到 ChangeSet 的构造。 */
+/** A host-format "dialect": system prompt + tool (JSON Schema) + construction from raw proposal to ChangeSet. */
 export interface HostDialect {
   format: string;
   systemPrompt: string;
   toolName: string;
   toolDescription: string;
-  parameters: Record<string, unknown>; // 工具入参 JSON Schema(Anthropic input_schema / OpenAI function.parameters 复用)
+  parameters: Record<string, unknown>; // Tool-input JSON Schema (reused as Anthropic input_schema / OpenAI function.parameters)
   buildChangeSet(req: ProposeRequest, proposal: unknown): ChangeSet;
 }
 
-/** 澄清提问的一个候选项:用户可点选,也可在"其他"里自己填。 */
+/** One candidate option for a clarifying question: user can click it, or type their own under "other". */
 export interface ClarifyOption { label: string; description?: string }
-/** 一个澄清问题:像 Claude Code 那样给引导选择表(2-4 项)+ 允许自填;multi=可多选。 */
+/** A clarifying question: Claude Code-style guided choice list (2-4 options) + free-form input allowed; multi = multi-select. */
 export interface ClarifyQuestion { header?: string; question: string; options: ClarifyOption[]; multi?: boolean }
 
-/** Agent 对一条请求的回应:回答问题(聊天)/ 提出表格改动(待审阅 diff)/ 需求模糊时反向澄清提问。 */
+/** Agent response to a request: answer a question (chat) / propose sheet changes (diff pending review) / ask clarifying questions back when intent is vague. */
 export type AgentResponse =
   | { kind: 'answer'; text: string }
   | { kind: 'changeset'; changeSet: ChangeSet }
   | { kind: 'clarify'; questions: ClarifyQuestion[] };
 
-/** 流式增量事件:思考过程(reasoning)、回答正文(answer)、改表工具入参增量(draft,供"边生成边画")、调了只读/校验工具、收尾。 */
+/** Streaming delta events: thinking (reasoning), answer body (answer), edit-tool input deltas (draft, for "render while generating"), a read-only/verify tool was called, and completion. */
 export type StreamEvent =
   | { type: 'reasoning'; delta: string }
   | { type: 'answer'; delta: string }
@@ -51,30 +51,30 @@ export type StreamEvent =
   | { type: 'tool'; name: string }
   | { type: 'done'; result: AgentResponse };
 
-/** 影子校验器:把提案应用到影子、重算后产出可回喂的观察(供 propose→observe→repair)。 */
+/** Shadow verifier: applies the proposal to a shadow copy, recalculates, and produces feedable observations (for propose→observe→repair). */
 export type ChangeSetVerifier = (cs: ChangeSet) => VerifyReport | Promise<VerifyReport>;
 
-/** respond/respondStream 的可选项:影子校验 + 修复轮数上限 + 宿主追加工具。 */
+/** Options for respond/respondStream: shadow verification + repair round cap + host-supplied extra tools. */
 export interface RespondOptions {
-  /** 提案产出后跑一次影子校验;ok=false 时把 report 回喂模型,允许其修正。省略=不校验。 */
+  /** Run one shadow verification after a proposal; when ok=false, feed the report back to the model so it can fix. Omit = no verification. */
   verify?: ChangeSetVerifier;
-  /** 校验不通过最多让模型重新提案几次(默认 1)。 */
+  /** Max number of re-proposal attempts when verification fails (default 1). */
   maxRepairs?: number;
-  /** 宿主追加的只读工具(如 load_skill 渐进披露):defs 并入工具菜单;exec 返回 null=不是它的工具,继续走取数路由。 */
+  /** Host-supplied read-only tools (e.g. load_skill progressive disclosure): defs merge into the tool menu; exec returning null = not its tool, fall through to the data-fetch routing. */
   extraTools?: { defs: Array<{ name: string; description: string; parameters: Record<string, unknown> }>; exec: (name: string, args: unknown) => string | null };
 }
 
-/** 任何模型实现(真实 Claude / OpenAI 兼容 / Mock)。 */
+/** Any model implementation (real Claude / OpenAI-compatible / Mock). */
 export interface ModelClient {
-  /** 仅产 ChangeSet(强制执行路径,保留给确定要改表的场景/测试)。 */
+  /** Produce a ChangeSet only (forced-execution path, kept for definitely-editing scenarios/tests). */
   proposeChangeSet(req: ProposeRequest, dialect: HostDialect): Promise<ChangeSet>;
-  /** 智能路由:模型自行决定『回答问题』还是『提出改动』(tool_choice:auto)。可选;无则回退到 proposeChangeSet。 */
+  /** Smart routing: model itself decides "answer" vs "propose changes" (tool_choice:auto). Optional; falls back to proposeChangeSet if absent. */
   respond?(req: ProposeRequest, dialect: HostDialect, opts?: RespondOptions): Promise<AgentResponse>;
-  /** 流式版:边生成边回调 reasoning/answer 增量,最终返回与 respond 相同的结果。可选。 */
+  /** Streaming variant: emits reasoning/answer deltas while generating, ultimately returns the same result as respond. Optional. */
   respondStream?(req: ProposeRequest, dialect: HostDialect, onEvent: (e: StreamEvent) => void, opts?: RespondOptions): Promise<AgentResponse>;
 }
 
-/** 测试/离线用:给定 (req → 原始提案) 函数,交 dialect 确定性构造 ChangeSet。 */
+/** For tests/offline: given a (req → raw proposal) function, deterministically builds the ChangeSet via the dialect. */
 export class MockModelClient implements ModelClient {
   constructor(private readonly fn: (req: ProposeRequest) => unknown) {}
   async proposeChangeSet(req: ProposeRequest, dialect: HostDialect): Promise<ChangeSet> {

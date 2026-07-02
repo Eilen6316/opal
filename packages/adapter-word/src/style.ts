@@ -1,19 +1,19 @@
 /**
- * OOXML 格式属性构建 —— 把抽象格式(字符/段落)编译成 <w:rPr>/<w:pPr> 子元素,
- * 并以【可审阅的格式修订】落盘:<w:rPrChange>(字符)/<w:pPrChange>(段落)内嵌原始属性,
- * 让 Word 把"改字体/字号/加粗/对齐/行距/样式/底纹"显示成可逐条接受/拒绝的原生修订。
- * clean-room:仅用公开 OOXML 语义。
+ * OOXML formatting-property builder — compiles abstract formats (character/paragraph) into <w:rPr>/<w:pPr> child elements,
+ * and persists them as reviewable format revisions: <w:rPrChange> (character) / <w:pPrChange> (paragraph) embed the original properties,
+ * so Word renders "font/size/bold/alignment/line-spacing/style/shading changes" as native tracked changes that can be accepted/rejected one by one.
+ * Clean-room: uses only public OOXML semantics.
  */
 
-/** 字符级格式(作用于选中文本的 run)。 */
+/** Character-level formatting (applies to the runs of the selected text). */
 export interface CharProps { bold?: boolean; italic?: boolean; underline?: boolean; font?: string; size?: number; color?: string }
-/** 段落级格式(作用于整段 pPr)。 */
+/** Paragraph-level formatting (applies to the whole paragraph's pPr). */
 export interface ParaProps { align?: 'left' | 'center' | 'right' | 'justify'; lineSpacing?: number; block?: 'h1' | 'h2' | 'h3' | 'p' | 'blockquote'; bgColor?: string }
 
 const escAttr = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 const hex = (c: string): string => { let h = c.replace(/[^0-9a-fA-F]/g, '').toUpperCase(); if (h.length === 3) h = h.replace(/(.)/g, '$1$1'); return h.slice(0, 6).padStart(6, '0'); };
 
-/** 新的 rPr 子元素 + 它们覆盖(需从原 rPr 移除)的标签名。 */
+/** New rPr child elements + the tag names they override (must be removed from the original rPr). */
 export function charElems(p: CharProps): { xml: string; overrides: string[] } {
   const out: string[] = [];
   const ov: string[] = [];
@@ -28,7 +28,7 @@ export function charElems(p: CharProps): { xml: string; overrides: string[] } {
 
 const STYLE_ID: Record<string, string> = { h1: 'Heading1', h2: 'Heading2', h3: 'Heading3', p: 'Normal', blockquote: 'Quote' };
 
-/** 新的 pPr 子元素(pStyle 需排在最前)+ 覆盖的标签名。 */
+/** New pPr child elements (pStyle must come first) + the overridden tag names. */
 export function paraElems(p: ParaProps): { xml: string; overrides: string[]; pStyle: string } {
   const out: string[] = [];
   const ov: string[] = [];
@@ -41,20 +41,20 @@ export function paraElems(p: ParaProps): { xml: string; overrides: string[]; pSt
 }
 
 const rxEl = (tag: string): RegExp => { const t = tag.replace(':', '\\:'); return new RegExp(`<${t}\\b[^>]*/>|<${t}\\b[^>]*>[\\s\\S]*?</${t}>`, 'g'); };
-/** 从一段 inner-XML 里删除指定标签(被新属性覆盖的旧元素)。 */
+/** Remove the given tags (old elements overridden by the new properties) from a chunk of inner XML. */
 function stripElems(inner: string, overrides: string[]): string {
   let s = inner;
   for (const tag of overrides) s = s.replace(rxEl(tag), '');
   return s;
 }
-/** 取 '<w:rPr ...>inner</w:rPr>' 或 '<w:rPr/>' 或 '' 的 inner。 */
+/** Extract the inner content of '<w:rPr ...>inner</w:rPr>', '<w:rPr/>', or ''. */
 function innerOf(el: string): string {
   const t = el.trim();
   if (!t || /^<w:[a-zA-Z]+\b[^>]*\/>$/.test(t)) return '';
   return /^<w:[a-zA-Z]+\b[^>]*>([\s\S]*)<\/w:[a-zA-Z]+>$/.exec(t)?.[1] ?? '';
 }
 
-/** 合并字符格式到 rPr:保留原有未被覆盖的属性 + 新属性,并把【原始 rPr】封进 rPrChange。 */
+/** Merge character formatting into rPr: keep original non-overridden properties + new ones, and wrap the original rPr inside rPrChange. */
 export function mergeRPr(origRPr: string, add: { xml: string; overrides: string[] }, id: number, author: string, date: string): string {
   const orig = origRPr || '<w:rPr/>';
   const cleaned = stripElems(innerOf(origRPr), add.overrides);
@@ -62,7 +62,7 @@ export function mergeRPr(origRPr: string, add: { xml: string; overrides: string[
   return `<w:rPr>${cleaned}${add.xml}${change}</w:rPr>`;
 }
 
-/** 合并段落格式到 pPr:pStyle 置前、保留其它、把【原始 pPr】封进 pPrChange(置于最后)。 */
+/** Merge paragraph formatting into pPr: pStyle first, keep the rest, and wrap the original pPr inside pPrChange (placed last). */
 export function mergePPr(origPPr: string, add: { xml: string; overrides: string[]; pStyle: string }, id: number, author: string, date: string): string {
   const orig = origPPr || '<w:pPr/>';
   const cleaned = stripElems(innerOf(origPPr), add.overrides);

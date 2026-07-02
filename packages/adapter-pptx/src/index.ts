@@ -1,6 +1,6 @@
 /**
- * @otterpatch/adapter-pptx —— PowerPoint 适配器(起步:幻灯片正文外科写回)。
- * ChangeSet replaceText → ppt/slides/slideN.xml 的 <a:t> 文本,只改命中 slide,其余字节不变。
- * 后续:形状/版式/母版定位锚点、图表数据源。
+ * @otterpatch/adapter-pptx — PowerPoint adapter (initial scope: surgical write-back of slide body text).
+ * ChangeSet replaceText → <a:t> text in ppt/slides/slideN.xml; only the matched slide is modified, all other bytes stay untouched.
+ * Future work: anchor resolution for shapes/layouts/masters, chart data sources.
  */
 export * from './pptx-patch.js';

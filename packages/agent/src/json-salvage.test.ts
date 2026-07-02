@@ -1,4 +1,4 @@
-/** 容错解析:被截断的工具入参也能救出已闭合的 edits/ops,避免整批崩。 */
+/** Fault-tolerant parsing: salvage the already-closed edits/ops from truncated tool args, so one cut-off doesn't kill the whole batch. */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
 import { salvageProposalArgs, salvageText, safeParse } from './json-salvage.js';
@@ -11,7 +11,7 @@ test('完整 JSON:正常解析,truncated=false', () => {
 });
 
 test('被截断的 edits:救回已闭合的条目,丢弃残缺尾巴', () => {
-  // mock 大量数据时常见:最后一个对象被输出长度切断
+  // Common when mocking large datasets: the last object gets cut off by the output length limit
   const raw = '{"plan":"mock 50 行","edits":[{"cell":"A2","op":"setValue","value":"x"},{"cell":"B2","op":"setValue","value":"y"},{"cell":"C2","op":"setVal';
   const r = salvageProposalArgs(raw);
   assert.equal(r.truncated, true);
@@ -41,7 +41,7 @@ test('safeParse:坏 JSON 不抛,返回 {}', () => {
 
 test('salvageText:截断的 answer_user 也救出已生成的正文', () => {
   assert.equal(salvageText('{"text":"完整回答"}'), '完整回答');
-  // 长答案在字符串中途被截断 → 仍取回已生成部分
+  // Long answer truncated mid-string → still recover the already-generated portion
   assert.equal(salvageText('{"text":"这是一段很长的回答,正写到一半就被截'), '这是一段很长的回答,正写到一半就被截');
   assert.match(salvageText('{"text":"第一行\\n第二行'), /第一行\n第二行/);
 });

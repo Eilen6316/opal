@@ -1,7 +1,10 @@
 /**
- * Excel 影子校验器 —— 把提案应用到"由整表快照建的影子网格"、递归重算公式,
- * 产出回喂模型的"观察":重算结果(供核对总额/百分比)+ 越界写入/重复命中等问题清单。
- * 这让 respond 从一次性变成 propose→observe→repair:模型能看到自己改动的真实计算结果并自我修正。
+ * Excel shadow verifier — applies a proposal to a shadow grid built from the full-sheet
+ * snapshot, recursively recalculates formulas, and produces "observations" fed back to the
+ * model: recalculated results (for checking totals/percentages) plus an issue list
+ * (out-of-bounds writes, duplicate hits, etc.).
+ * This turns respond from one-shot into propose→observe→repair: the model sees the actual
+ * computed results of its edits and can self-correct.
  */
 import type { CellValue, ChangeSet, VerifyReport } from '@otterpatch/core';
 import { GridChangeSetEngine, gridShadow } from './grid-engine.js';
@@ -27,7 +30,7 @@ function cellRC(a1: string): { col: number; row: number } {
 }
 const bareCell = (a1: string): string =>
   (a1.replace(/^.*!/, '').replace(/\$/g, '').split(':')[0] ?? 'A1').toUpperCase();
-/** 取 a1("A1" / "A1:F20" / "Sheet1!A1")左上角的 0-based 列/行。 */
+/** Get the 0-based col/row of the top-left cell of a1 ("A1" / "A1:F20" / "Sheet1!A1"). */
 function topLeft(a1: string): { c: number; r: number } {
   const rc = cellRC(bareCell(a1));
   return { c: rc.col - 1, r: rc.row - 1 };
@@ -38,7 +41,7 @@ export interface SheetSnapshot {
   values: unknown[][];
 }
 
-/** 由整表快照造一个影子校验器(返回签名兼容 @otterpatch/agent 的 ChangeSetVerifier)。 */
+/** Build a shadow verifier from a full-sheet snapshot (return signature is compatible with @otterpatch/agent's ChangeSetVerifier). */
 export function buildGridVerifier(sheet: SheetSnapshot): (cs: ChangeSet) => Promise<VerifyReport> {
   return async (cs: ChangeSet): Promise<VerifyReport> => {
     const tl = topLeft(sheet.a1);
@@ -53,15 +56,15 @@ export function buildGridVerifier(sheet: SheetSnapshot): (cs: ChangeSet) => Prom
         if (v != null && v !== '') shadow.set(colLetter(tl.c + c) + (tl.r + r + 1), { value: v as CellValue });
       }
     }
-    const dataMaxRow = tl.r + rows; // 1-based 末尾数据行
-    const dataMaxCol = tl.c + maxCol; // 1-based 末尾数据列
+    const dataMaxRow = tl.r + rows; // 1-based last data row
+    const dataMaxCol = tl.c + maxCol; // 1-based last data column
 
     let recalculated: CellValue[][] = [];
     try {
       const res = await new GridChangeSetEngine().shadowApply(cs, shadow);
       recalculated = res.effects.recalculated ?? [];
     } catch {
-      return { ok: true, report: '' }; // 影子无法应用 → 不阻断提案
+      return { ok: true, report: '' }; // shadow apply failed → don't block the proposal
     }
 
     const issues: string[] = [];

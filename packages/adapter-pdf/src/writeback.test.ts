@@ -1,5 +1,5 @@
 /**
- * PDF 表单填写:setValue(object 锚点 = 字段名)→ AcroForm 字段值更新。
+ * PDF form filling: setValue (object anchor = field name) → updates the AcroForm field value.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';

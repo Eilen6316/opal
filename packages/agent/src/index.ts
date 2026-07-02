@@ -1,6 +1,6 @@
 /**
- * @otterpatch/agent —— 意图 → 受约束 ChangeSet。
- * Provider 无关的 ModelClient:Claude 原生 + OpenAI 兼容(DeepSeek/GLM/Kimi/豆包/MiniMax/Gemini/ChatGPT)。
+ * @otterpatch/agent — intent → constrained ChangeSet.
+ * Provider-agnostic ModelClient: native Claude + OpenAI-compatible (DeepSeek/GLM/Kimi/Doubao/MiniMax/Gemini/ChatGPT).
  */
 export * from './model.js';
 export * from './dialects.js';

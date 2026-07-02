@@ -1,5 +1,5 @@
 /**
- * 共享取数件:read_range / aggregate / execSheetTool —— 供 OpenAI 与 Claude 两通道复用。
+ * Shared data-access pieces: read_range / aggregate / execSheetTool — reused by both the OpenAI and Claude channels.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +32,7 @@ test('aggregate:整列求和/计数跳过表头', () => {
 });
 
 test('aggregate:groupBy 透视/分组汇总', () => {
-  // 按 A 列(名称)分组,汇总 B 列(数量)—— 这里名称都唯一,各成一组
+  // Group by column A (名称), aggregate column B (数量) — names are all unique here, so each forms its own group
   const g = aggregate(SHEET, 'B', 'sum', 'A');
   assert.match(g, /甲: 2/);
   assert.match(g, /乙: 3/);
@@ -40,7 +40,7 @@ test('aggregate:groupBy 透视/分组汇总', () => {
 });
 
 test('aggregate:where 先筛选再聚合', () => {
-  // 只统计 单价(C)>10 的行的 数量(B):乙(3,单价20)+丙(5,单价0?) → 仅乙满足 → 3
+  // Sum 数量 (B) only for rows where 单价 (C) > 10: 乙 (3, price 20) + 丙 (5, price 0?) → only 乙 qualifies → 3
   assert.equal(aggregate(SHEET, 'B', 'sum', undefined, { col: 'C', op: '>', value: 10 }), '3');
 });
 
@@ -63,13 +63,13 @@ test('parseClarify:解析问题(字符串/对象皆可)+ 规范化 + 上限', ()
   assert.equal(qs[0]!.header, '图表类型');
   assert.equal(qs[0]!.options[0]!.label, '柱状图');
   assert.equal(qs[0]!.options[0]!.description, '比大小');
-  // 已解析对象同样可用 + multi 透传
+  // Already-parsed objects work too; `multi` is passed through
   assert.equal(parseClarify({ questions: [{ question: 'q?', multi: true, options: [{ label: 'a' }] }] })[0]!.multi, true);
 });
 
 test('parseClarify:丢弃无效问题/空选项,截断坏 JSON 不抛', () => {
   assert.deepEqual(parseClarify('not json'), []);
-  assert.deepEqual(parseClarify({ questions: [{ question: '', options: [{ label: 'x' }] }] }), []); // 无题面
-  assert.deepEqual(parseClarify({ questions: [{ question: 'q?', options: [{ label: '' }] }] }), []); // 无有效选项
+  assert.deepEqual(parseClarify({ questions: [{ question: '', options: [{ label: 'x' }] }] }), []); // no question text
+  assert.deepEqual(parseClarify({ questions: [{ question: 'q?', options: [{ label: '' }] }] }), []); // no valid options
   assert.equal(parseClarify({ questions: Array.from({ length: 9 }, () => ({ question: 'q?', options: [{ label: 'a' }] })) }).length, 4); // ≤4
 });
