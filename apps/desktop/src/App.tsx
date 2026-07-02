@@ -13,6 +13,7 @@ import type { UniSel, SheetHandle } from './UniverSheet.js';
 import type { RichDocHandle, DocFmt, WordSel } from './RichDoc.js';
 import { docxToHtml } from './docximport.js';
 import { akey, BATCH_RX, AUTO_BATCH_CAP } from './review-shared.js';
+import { streamPropose } from './agent-client.js';
 import { ReviewBox } from './ReviewBox.js';
 import { AgentHome } from './AgentHome.js';
 import { Composer } from './Composer.js';
@@ -715,38 +716,24 @@ export function App() {
       setThread((th) => [...th, { role: 'user', text: theIntent }]); // 用户气泡立刻进流
       setIntent('');
       try {
-        const resp = await fetch(ep + '/propose-stream', {
-          method: 'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body: JSON.stringify({ format: fmt, intent: theIntent, context: ctx, provider, model, apiKey, ...(isExcel && sheetSnap?.sheet ? { sheet: sheetSnap.sheet } : {}), ...(docSnap ? { doc: docSnap } : {}), ...(thread.length ? { history: buildHistory(thread) } : {}) }),
-        });
-        if (!resp.ok || !resp.body) throw new Error('propose failed (' + resp.status + ')');
-        if (theIntent.trim()) setRecent((rr) => [{ t: theIntent.trim(), time: t('刚刚') }, ...rr.filter((x) => x.t !== theIntent.trim())].slice(0, 6));
-        setSent(true);
-        // 占位的流式回答气泡(reasoning + 正文边到边渲染)
-        setThread((th) => [...th, { role: 'assistant', kind: 'answer', text: '', reasoning: '', streaming: true }]);
         const upd = (fn: (t: Extract<Turn, { role: 'assistant' }>) => Turn): void => setThread((th) => th.map((tt, i) => (i === th.length - 1 && tt.role === 'assistant' ? fn(tt) : tt)));
-        const reader = resp.body.getReader();
-        const dec = new TextDecoder();
-        let buf = '';
-        let finished = false;
-        // 重置「边生成边画」流式状态
+        // Reset the draw-while-streaming state before the stream opens.
         draftBufRef.current = '';
         drawnOpsRef.current = 0;
         streamConvRef.current = null;
         streamObjsRef.current = [];
         streamByEditRef.current = {};
-        while (!finished) {
-          const { done, value } = await reader.read();
-          if (done) break;
-          buf += dec.decode(value, { stream: true });
-          const chunks = buf.split('\n\n');
-          buf = chunks.pop() ?? '';
-          for (const c of chunks) {
-            const line = c.split('\n').find((l) => l.startsWith('data: '));
-            if (!line) continue;
-            let e: { type: string; delta?: string; name?: string; kind?: string; text?: string; diff?: AgentDiff; changeSet?: unknown; questions?: ClarifyQuestion[]; message?: string };
-            try { e = JSON.parse(line.slice(6)); } catch { continue; }
+        type StreamEvt = { type: string; delta?: string; name?: string; kind?: string; text?: string; diff?: AgentDiff; changeSet?: unknown; questions?: ClarifyQuestion[]; message?: string };
+        await streamPropose<StreamEvt>(
+          ep,
+          { format: fmt, intent: theIntent, context: ctx, provider, model, apiKey, ...(isExcel && sheetSnap?.sheet ? { sheet: sheetSnap.sheet } : {}), ...(docSnap ? { doc: docSnap } : {}), ...(thread.length ? { history: buildHistory(thread) } : {}) },
+          () => {
+            if (theIntent.trim()) setRecent((rr) => [{ t: theIntent.trim(), time: t('刚刚') }, ...rr.filter((x) => x.t !== theIntent.trim())].slice(0, 6));
+            setSent(true);
+            // Optimistic streaming bubble (reasoning + body render live).
+            setThread((th) => [...th, { role: 'assistant', kind: 'answer', text: '', reasoning: '', streaming: true }]);
+          },
+          (e) => {
             if (e.type === 'reasoning') upd((tt) => (tt.kind === 'answer' ? { ...tt, reasoning: (tt.reasoning ?? '') + (e.delta ?? '') } : tt));
             else if (e.type === 'answer') upd((tt) => (tt.kind === 'answer' ? { ...tt, text: (tt.text ?? '') + (e.delta ?? '') } : tt));
             else if (e.type === 'tool') upd((tt) => (tt.kind === 'answer' ? { ...tt, reasoning: (tt.reasoning ?? '') + `\n〔查表 ${e.name}〕\n` } : tt));
@@ -766,7 +753,6 @@ export function App() {
             }
             else if (e.type === 'error') throw new Error(e.message ?? 'stream error');
             else if (e.type === 'done') {
-              finished = true;
               if (e.kind === 'changeset' && e.diff) {
                 const diff = e.diff;
                 const cs = e.changeSet ?? null;
@@ -820,8 +806,8 @@ export function App() {
                 upd((tt) => (tt.kind === 'answer' ? { ...tt, text: e.text ?? tt.text, streaming: false } : tt));
               }
             }
-          }
-        }
+          },
+        );
       } catch (e) {
         const m = e instanceof Error ? e.message : String(e);
         const refused = /failed to fetch|refused|ECONNREFUSED|networkerror|load failed/i.test(m);
