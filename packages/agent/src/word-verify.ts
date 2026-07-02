@@ -19,14 +19,22 @@ export function buildDocVerifier(docText: string): (cs: ChangeSet) => VerifyRepo
     const errors: string[] = [];
     const warnings: string[] = [];
     const seen = new Set<string>();
+    const paraCount = docText.split('\n').filter((s) => s.trim() !== '').length; // getText 的清样投影:一行一段
     for (const e of cs.edits) {
       const a = cs.anchors[e.target];
       const quote = a?.portable.kind === 'flow' ? a.portable.quote.text : '';
+      const paraIdx = a?.portable.kind === 'flow' ? a.portable.path[0] : undefined;
       const isStyle = e.op.kind === 'setStyle';
+      // 段号锚定(para):不依赖 quote。getText 清样投影会滤掉空段,段数只是下限,越界只提醒不拦截
+      if (paraIdx != null) {
+        if (paraIdx < 0) errors.push('para 段号必须 ≥ 1');
+        else if (paraIdx >= paraCount * 2 + 50) warnings.push(`para=${paraIdx + 1} 远超全文段数(约 ${paraCount} 段),请核对上下文里的"第N段"编号`);
+        continue;
+      }
       // Document-wide style edits (all=true) have no quote anchor and always land — skip location check
       if (isStyle && !quote) continue;
       if (!quote) {
-        errors.push('有一条改动没有可定位的原文片段(quote 为空),无法落地');
+        errors.push('有一条改动没有可定位的原文片段(quote 为空)也没有 para 段号,无法落地;空段落/无法唯一引用时请给 para=段号');
         continue;
       }
       const first = docText.indexOf(quote);

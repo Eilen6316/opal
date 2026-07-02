@@ -309,6 +309,10 @@ export interface WordProposal {
   plan: string;
   edits: Array<{
     quote: string;
+    /** 1-based paragraph number (from context/read_blocks) — anchors empty or non-unique paragraphs where quote can't; quote may be '' */
+    para?: number;
+    /** Structural: delete the whole paragraph at para/quote (empty-paragraph cleanup, redundant blocks) */
+    deletePara?: boolean;
     replacement?: string; // text rewrite: if given, replaces the original text
     // Formatting (any present = format edit, replacement not needed); all=true means whole document, quote may be omitted
     all?: boolean;
@@ -342,10 +346,13 @@ function buildWordChangeSet(req: ProposeRequest, p: WordProposal): ChangeSet {
       kind: 'flow',
       ref: null,
       baseRev: req.baseRev,
-      portable: { kind: 'flow', path: [i], quote: { prefix: '', text: quoteText, suffix: '' }, bias: 'left' },
+      // path 携带显式段号(0-based;仅当模型给了 para)——前端 quote 定位失败/空段落时按段号落锚
+      portable: { kind: 'flow', path: e.para != null && e.para >= 1 ? [e.para - 1] : [], quote: { prefix: '', text: quoteText, suffix: '' }, bias: 'left' },
     };
-    const isFormat = e.replacement == null && (e.bold != null || e.italic != null || e.underline != null || e.font != null || e.size != null || e.color != null || e.align != null || e.lineSpacing != null || e.bgColor != null || e.block != null || e.columns != null || e.margin != null || e.orient != null);
-    const op: EditOp = isFormat
+    const isFormat = !e.deletePara && e.replacement == null && (e.bold != null || e.italic != null || e.underline != null || e.font != null || e.size != null || e.color != null || e.align != null || e.lineSpacing != null || e.bgColor != null || e.block != null || e.columns != null || e.margin != null || e.orient != null);
+    const op: EditOp = e.deletePara
+      ? { family: 'value', kind: 'deleteRange' }
+      : isFormat
       ? {
           family: 'style',
           kind: 'setStyle',
@@ -385,7 +392,9 @@ export const wordDialect: HostDialect = {
         items: {
           type: 'object',
           properties: {
-            quote: { type: 'string', description: '文档中真实存在的原文片段(用于定位);改格式时也用它选中要套格式的文字。全文操作可配合 all=true 省略' },
+            quote: { type: 'string', description: '文档中真实存在的原文片段(用于定位);改格式时也用它选中要套格式的文字。全文操作可配合 all=true 省略;空段落/无法唯一定位时给空串并用 para 段号锚定' },
+            para: { type: 'number', description: '段号(1-based,即上下文/read_blocks 里的"第N段")。空段落、重复文本等 quote 无法唯一定位时用它锚定整段;给了 para 时 quote 可为空串' },
+            deletePara: { type: 'boolean', description: '结构操作:true=删除 para(或 quote)所在的整段(清理空段落/删除冗余段落)。不要同时给 replacement 或格式字段' },
             replacement: { type: 'string', description: '文本改写:改后的文字(给了它即为"替换原文"。要改格式就别给它)' },
             all: { type: 'boolean', description: '格式改动作用于【全文】(如"全文宋体五号");true 时可不给 quote' },
             bold: { type: 'boolean', description: '加粗:true 设为加粗、false 取消加粗' },
