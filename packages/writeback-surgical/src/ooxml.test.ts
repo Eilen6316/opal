@@ -1,6 +1,7 @@
 /**
- * 外科补丁核心性质的单元测试 —— 把 experiments/exp1_surgical_test.py 的关键结论固化为回归测试:
- * "改一处部件,其余部件字节级不变"。
+ * Unit tests for the core surgical-patch invariant — codifies the key conclusion of
+ * experiments/exp1_surgical_test.py as a regression test:
+ * "patch one part; all other parts stay byte-identical".
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -10,7 +11,7 @@ import { comparePartsIntegrity, repackOoxml } from './ooxml.js';
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 
 test('外科补丁:只改目标部件,其余字节级不变', () => {
-  // 合成一个迷你 OOXML(模拟真实 .docx 的多部件:正文/样式/图片)
+  // Build a minimal synthetic OOXML (mimics a real .docx's multiple parts: body/styles/image)
   const original = zipSync({
     '[Content_Types].xml': enc('<Types/>'),
     'word/document.xml': enc('<w:document><w:t>hello</w:t></w:document>'),
@@ -18,7 +19,7 @@ test('外科补丁:只改目标部件,其余字节级不变', () => {
     'word/media/image1.png': new Uint8Array([1, 2, 3, 4, 5]),
   });
 
-  // 外科补丁:只改 document.xml
+  // Surgical patch: modify only document.xml
   const patched = repackOoxml(original, {
     'word/document.xml': enc('<w:document><w:t>hello[PATCH]</w:t></w:document>'),
   });

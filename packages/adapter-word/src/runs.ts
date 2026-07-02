@@ -1,7 +1,8 @@
 /**
- * <w:p> 段落内 run 级解析与切分 —— 外科写回的关键:
- * 把段落正文拆成 run/非run 词元,按【字符区间】精确切分命中的 run,
- * 使未触及的 run【逐字节保留】(含其 <w:rPr> 细粒度格式),只重写真正改到的那一小段。
+ * Run-level parsing and splitting inside a <w:p> paragraph — the key to surgical write-back:
+ * tokenize the paragraph body into run/non-run tokens, split hit runs precisely by character range,
+ * so untouched runs are preserved byte-for-byte (including their fine-grained <w:rPr> formatting),
+ * rewriting only the small segment that actually changed.
  */
 
 export const esc = (s: string): string => s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
@@ -9,22 +10,22 @@ export function unescapeXml(s: string): string {
   return s.replace(/&lt;/g, '<').replace(/&gt;/g, '>').replace(/&quot;/g, '"').replace(/&#39;/g, "'").replace(/&amp;/g, '&');
 }
 
-/** 段落全部可见文本(所有 <w:t>,含嵌套如超链接内),用于"该段是否含 quote"判定。 */
+/** All visible text of a paragraph (every <w:t>, including nested ones e.g. inside hyperlinks), used to decide "does this paragraph contain the quote". */
 export function paraText(para: string): string {
   let t = '';
   for (const m of para.matchAll(/<w:t\b[^>]*>([\s\S]*?)<\/w:t>/g)) t += unescapeXml(m[1]!);
   return t;
 }
 
-/** 拆出 <w:p> 的 open 标签、pPr、以及 pPr 之后的正文 body。pPr 深度感知(可含嵌套 pPrChange 里的 <w:pPr>)。 */
+/** Split a <w:p> into its open tag, pPr, and the body after pPr. pPr matching is depth-aware (a nested <w:pPr> may appear inside pPrChange). */
 export function parsePara(para: string): { open: string; pPr: string; body: string } {
   const open = /^<w:p\b[^>]*>/.exec(para)?.[0] ?? '<w:p>';
   const inner = para.slice(open.length, para.length - '</w:p>'.length);
   let pPr = '';
-  const sc = /^\s*<w:pPr\b[^>]*\/>/.exec(inner); // 自闭合 pPr
+  const sc = /^\s*<w:pPr\b[^>]*\/>/.exec(inner); // self-closing pPr
   if (sc) pPr = sc[0];
   else if (/^\s*<w:pPr\b/.test(inner)) {
-    // 深度匹配:pPrChange 里嵌了 <w:pPr>…</w:pPr>,不能用非贪婪一把切
+    // Depth-aware matching: pPrChange can nest <w:pPr>…</w:pPr>, so a single non-greedy match would cut too early
     const re = /<w:pPr\b(?:[^>]*[^/])?>|<\/w:pPr>/g;
     let depth = 0;
     let m: RegExpExecArray | null;
@@ -39,7 +40,7 @@ export function parsePara(para: string): { open: string; pPr: string; body: stri
 
 export interface Tok { run: boolean; xml: string; rPr: string; text: string; complex: boolean }
 
-/** 把 body 拆成 顶层 run 与其间的非run 片段(书签/超链接等原样保留)。 */
+/** Split the body into top-level runs and the non-run fragments between them (bookmarks/hyperlinks etc. preserved as-is). */
 export function splitBody(body: string): Tok[] {
   const toks: Tok[] = [];
   const re = /<w:r\b[^>]*>[\s\S]*?<\/w:r>/g;
@@ -62,11 +63,11 @@ export function splitBody(body: string): Tok[] {
 const mkRun = (rPr: string, text: string): string => `<w:r>${rPr}<w:t xml:space="preserve">${esc(text)}</w:t></w:r>`;
 
 /**
- * 在拼接后的 run 文本区间 [s,e) 上切分:
- * before = 区间前的 run(逐字节保留)+ 命中 run 的前缀;
- * middle = 区间覆盖的各 run 片段(带各自 rPr,供 red-line/加格式);
- * after  = 命中 run 的后缀 + 区间后的 run(逐字节保留)。
- * ok=false 表示区间落进了含制表符/换行/图形等的复杂 run,无法安全切分(由调用方回退)。
+ * Slice on the concatenated run-text range [s,e):
+ * before = runs preceding the range (preserved byte-for-byte) + prefix of the hit run;
+ * middle = run fragments covered by the range (each with its own rPr, for red-lining/formatting);
+ * after  = suffix of the hit run + runs after the range (preserved byte-for-byte).
+ * ok=false means the range falls into a complex run (tabs/line breaks/drawings etc.) that cannot be split safely (caller must fall back).
  */
 export function sliceRuns(toks: Tok[], s: number, e: number): { before: string; middle: { rPr: string; text: string }[]; after: string; ok: boolean } {
   let pos = 0;
@@ -82,8 +83,8 @@ export function sliceRuns(toks: Tok[], s: number, e: number): { before: string; 
     if (end <= s) before += tk.xml;
     else if (start >= e) after += tk.xml;
     else if (tk.complex) {
-      // 命中复杂 run(制表符/换行/图形…):整体保留、不进 middle,ok=false 交由调用方整段回退,
-      // 否则会与 spanRedline 对整段 quote 的删改重复输出该 run 文本,造成正文重复/损坏。
+      // Hit a complex run (tab/line break/drawing…): keep it whole, do not add it to middle, and set ok=false so the caller falls back to whole-paragraph handling;
+      // otherwise its text would be emitted again by spanRedline's delete/insert of the full quote, duplicating/corrupting the body.
       ok = false;
       if (start < s) before += tk.xml; else after += tk.xml;
     } else {

@@ -15,7 +15,10 @@ await page.waitForSelector('.rd-ribbon');
 await page.waitForSelector('.rd-page');
 
 const tab = (name) => page.locator('.rd-ribbon .rtab', { hasText: name }).click();
-const cmd = (c) => page.click(`[data-cmd="${c}"]`);
+// Ribbon buttons act on mousedown (preventDefault + exec). Dispatch it directly instead of
+// page.click(): selection changes re-render the ribbon, and Playwright's actionability retry
+// can livelock on "element detached" when the machine is slow (observed on main too).
+const cmd = (c) => page.locator(`[data-cmd="${c}"]`).first().dispatchEvent('mousedown');
 const svgOf = (c) => page.evaluate((x) => { const el = document.querySelector(`[data-cmd="${x}"] svg`); return el ? el.innerHTML.replace(/\s+/g, ' ') : null; }, c);
 
 async function resetDoc(html = '<h2>标题演示段</h2><p>这是一段用于测试的正文文字内容示例。</p>') {

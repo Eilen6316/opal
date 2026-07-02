@@ -1,7 +1,8 @@
 /**
- * 适配器契约 + 能力协商 —— 唯一"窄腰"。
- * 新增底座/格式 = 只实现一个 HostAdapter。能力协商前置到 list()/validate(总闸门)。
- * 详见 .work/abstraction-layer.md §5。
+ * Adapter contract + capability negotiation — the single "narrow waist".
+ * Adding a host/format = implementing one HostAdapter. Capability negotiation is
+ * front-loaded into list()/validate (the master gate).
+ * See .work/abstraction-layer.md §5.
  */
 import type {
   AnchorKind,
@@ -28,7 +29,7 @@ export interface HostMeta {
 export interface PartRef {
   hostId: string;
   sub?: string;
-} // sheet / slide;Word 恒单文档流
+} // sheet / slide; Word is always a single document flow
 
 /** Read-only structured projection request. The envelope is the cross-adapter contract;
  *  `args` carries host-specific parameters (kept opaque on purpose — payloads differ per host). */
@@ -49,7 +50,7 @@ export interface OverlayPort {
 
 export interface OpCapability {
   level: 'native' | 'downgrade' | 'unsupported';
-  downgradeTo?: EditOpKind; // 如 setFormula→setValue
+  downgradeTo?: EditOpKind; // e.g. setFormula→setValue
   limits?: { maxCells?: number; maxTextLen?: number; maxBatchEdits?: number };
 }
 export type CapabilityQuery =
@@ -66,7 +67,7 @@ export interface CapabilitySet {
   readonly diffGranularity: readonly DiffLevel[];
   readonly ops: Readonly<Record<EditOpKind, OpCapability>>;
   readonly features: {
-    shadowApply: boolean; // Univer headless:true;OnlyOffice 免费:false
+    shadowApply: boolean; // Univer headless: true; OnlyOffice free tier: false
     nativeUndo: boolean;
     antiDrift: 'auto' | 'reanchor' | 'none'; // Univer RefRange/PM RelPos=auto
     formulaRecalc: boolean;
@@ -75,7 +76,7 @@ export interface CapabilitySet {
   supports(q: CapabilityQuery): CapabilityVerdict;
 }
 
-/** validate 阶段把抽象 ChangeSet 投影到目标底座,产可执行子集 + 降级 + 拒绝。 */
+/** At the validate stage, projects the abstract ChangeSet onto the target host, yielding a runnable subset + downgrades + rejections. */
 export interface CapabilityNegotiator {
   negotiate(
     cs: ChangeSet,

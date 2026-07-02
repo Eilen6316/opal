@@ -1,8 +1,10 @@
 /**
- * Agent —— 意图 → ChangeSet 的入口。按 req.format 选 HostDialect,并把
- * 约定层(ConventionStack:怎么做的规矩)与技能库(SkillLibrary:会做什么)按需注入系统提示。
- * 可选校验器 + maxRetries:校验失败时把错误结构化回喂、同回合重试修正(借鉴 codex apply_patch 的
- * 应用-回报-迭代闭环)。后续接技能脚本执行、能力协商、影子校验。
+ * Agent — entry point from intent to ChangeSet. Picks the HostDialect by req.format and
+ * injects the convention layer (ConventionStack: rules on how to do things) and the skill
+ * library (SkillLibrary: what it can do) into the system prompt on demand.
+ * Optional validator + maxRetries: on validation failure, feed structured errors back and
+ * retry within the same turn (inspired by codex apply_patch's apply-report-iterate loop).
+ * Later: skill-script execution, capability negotiation, shadow validation.
  */
 import type { ChangeSet } from '@otterpatch/core';
 import type { SkillLibrary } from '@otterpatch/skills';
@@ -17,9 +19,9 @@ export interface ChangeSetValidation {
 export type Validator = (cs: ChangeSet) => ChangeSetValidation;
 
 export interface AgentOptions {
-  /** 校验提案;不 ok 时把 errors 回喂模型重试。省略=不校验(单次)。 */
+  /** Validates a proposal; if not ok, errors are fed back to the model for retry. Omit = no validation (single shot). */
   validator?: Validator;
-  /** 校验失败最多重试几次(默认 0)。 */
+  /** Max retries after validation failure (default 0). */
   maxRetries?: number;
 }
 
@@ -32,7 +34,7 @@ export class Agent {
     private readonly opts: AgentOptions = {},
   ) {}
 
-  /** 组装注入了约定/技能的 dialect。 */
+  /** Builds the dialect with conventions/skills injected. */
   private dialectFor(req: ProposeRequest): HostDialect {
     const dialect = this.dialects[req.format];
     if (!dialect) throw new Error(`Agent: no dialect for format "${req.format}"`);
@@ -44,10 +46,10 @@ export class Agent {
     return parts.length > 1 ? { ...dialect, systemPrompt: parts.join('\n\n') } : dialect;
   }
 
-  /** 技能渐进披露 L1:库里有带手册的技能时,给 loop 追加 load_skill 工具(命中后拉全文,不预塞 prompt)。 */
+  /** Progressive skill disclosure L1: if the library has skills with playbooks, add a load_skill tool to the loop (fetch full text on hit instead of pre-stuffing the prompt). */
   private withSkillTools(opts?: RespondOptions): RespondOptions | undefined {
     const lib = this.skills;
-    if (!lib || opts?.extraTools) return opts; // 调用方已带 extraTools 时不覆盖
+    if (!lib || opts?.extraTools) return opts; // don't override when the caller already provides extraTools
     const withBody = lib.all().filter((c) => c.instructions);
     if (!withBody.length) return opts;
     const extraTools: NonNullable<RespondOptions['extraTools']> = {
@@ -65,14 +67,14 @@ export class Agent {
     return { ...(opts ?? {}), extraTools };
   }
 
-  /** 智能路由:模型自行决定回答问题还是提出改动(回退到 propose)。 */
+  /** Smart routing: the model decides whether to answer a question or propose changes (falls back to propose). */
   async respond(req: ProposeRequest, opts?: RespondOptions): Promise<AgentResponse> {
     const d = this.dialectFor(req);
     if (this.model.respond) return this.model.respond(req, d, this.withSkillTools(opts));
     return { kind: 'changeset', changeSet: await this.model.proposeChangeSet(req, d) };
   }
 
-  /** 流式路由:有 respondStream 则透传;否则回退到一次性结果并补发增量/done。 */
+  /** Streaming routing: pass through if respondStream exists; otherwise fall back to a one-shot result and emit delta/done events. */
   async respondStream(req: ProposeRequest, onEvent: (e: StreamEvent) => void, opts?: RespondOptions): Promise<AgentResponse> {
     const d = this.dialectFor(req);
     if (this.model.respondStream) return this.model.respondStream(req, d, onEvent, this.withSkillTools(opts));

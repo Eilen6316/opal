@@ -59,7 +59,7 @@ test('Agent + SkillLibrary: 命中技能注入系统提示,不影响产出', asy
     context: '',
   });
   assert.equal(cs.edits.length, 1);
-  assert.equal(lib.match('把金额列补齐', 'excel')[0]!.name, 'xlsx'); // 库命中 Excel 技能
+  assert.equal(lib.match('把金额列补齐', 'excel')[0]!.name, 'xlsx'); // library matches the Excel skill
 });
 
 test('ConventionStack: 分层拼接,global→workspace→document(就近在后)', () => {
@@ -68,7 +68,7 @@ test('ConventionStack: 分层拼接,global→workspace→document(就近在后)'
     .add({ scope: 'global', text: '日期一律 YYYY-MM-DD' });
   const r = s.render();
   assert.match(r, /约定/);
-  assert.ok(r.indexOf('YYYY-MM-DD') < r.indexOf('四号字')); // global 在前,document 在后
+  assert.ok(r.indexOf('YYYY-MM-DD') < r.indexOf('四号字')); // global comes first, document last
 });
 
 test('conventionFromMarkdown: 去 frontmatter 取正文', () => {
@@ -101,7 +101,7 @@ test('Agent reask: 校验失败 → 同回合重试修正', async () => {
     validator: (c) => ({ ok: c.edits.length > 0, errors: c.edits.length ? [] : ['edits 不能为空'] }),
     maxRetries: 2,
   }).propose({ hostId: 'h1', format: 'excel', intent: 'x', baseRev: 0 as DocRev, anchors: [], context: '' });
-  assert.equal(n, 2); // 第一次空→重试,第二次通过
+  assert.equal(n, 2); // first call empty → retry, second passes
   assert.equal(cs.edits.length, 1);
 });
 
@@ -116,7 +116,7 @@ test('Agent reask: 用尽重试返回最后一次(调用 1+maxRetries 次)', asy
     maxRetries: 2,
   }).propose({ hostId: 'h1', format: 'excel', intent: 'x', baseRev: 0 as DocRev, anchors: [], context: '' });
   assert.equal(n, 3); // 1 + 2 retries
-  assert.equal(cs.edits.length, 0); // 返回最后一次(无效),交下游裁决
+  assert.equal(cs.edits.length, 0); // returns the last (invalid) result; downstream decides
 });
 
 test('createModelClient 覆盖 8 家厂商(9 个 provider key)', () => {
@@ -129,7 +129,7 @@ test('createModelClient 覆盖 8 家厂商(9 个 provider key)', () => {
 });
 
 test('normalizeMessages: 合并相邻同角色,防 provider roles-must-alternate 500', () => {
-  // 快速连发/answer+diff 拆轮造成的背靠背 assistant → 合并成一条
+  // back-to-back assistant messages caused by rapid-fire sends / answer+diff turn splitting → merged into one
   const out = normalizeMessages([
     { role: 'system', content: 'S' },
     { role: 'user', content: '改X' },
@@ -145,7 +145,7 @@ test('normalizeMessages: 丢空消息 + 合并背靠背 user(失败回滚/空指
   const out = normalizeMessages([
     { role: 'system', content: 'S' },
     { role: 'user', content: '悬挂的旧指令' },
-    { role: 'user', content: '' }, // 空 user 应被丢弃
+    { role: 'user', content: '' }, // empty user message should be dropped
     { role: 'user', content: '当前指令' },
   ]);
   assert.deepEqual(out.map((m) => m.role), ['system', 'user']);

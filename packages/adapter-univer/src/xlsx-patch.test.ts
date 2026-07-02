@@ -1,7 +1,7 @@
 /**
- * 端到端:Excel setValue → 外科补丁写回真实结构的 .xlsx,验证
- *  (1) 目标单元格值确实改了、样式保留;
- *  (2) 其余部件(workbook/rels/styles/media…)字节级不变。
+ * End-to-end: Excel setValue → surgical patch written back into a structurally real .xlsx, verifying
+ *  (1) the target cell value actually changed and its style is preserved;
+ *  (2) all other parts (workbook/rels/styles/media...) are byte-identical.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -17,7 +17,7 @@ import { buildXlsxCompiler } from './xlsx-patch.js';
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 const dec = new TextDecoder();
 
-/** 构造一个结构合法的迷你 .xlsx(单 sheet,A1=10、B1=20,带样式/媒体作为"不应改动"的部件)。 */
+/** Build a structurally valid mini .xlsx (single sheet, A1=10, B1=20, with styles/media as "must-not-change" parts). */
 function makeXlsx(): Uint8Array {
   return zipSync({
     '[Content_Types].xml': enc('<?xml version="1.0"?><Types/>'),
@@ -87,7 +87,7 @@ test('setValue 字符串:走 inlineStr,不触碰 sharedStrings', async () => {
   assert.match(sheet, /<c r="B1" s="2" t="inlineStr"><is><t>利润<\/t><\/is><\/c>/);
 });
 
-/** 单 edit ChangeSet:B1(或指定 a1)+ 任意 EditOp。 */
+/** Single-edit ChangeSet: B1 (or the given a1) + an arbitrary EditOp. */
 function csOp(op: EditOp, a1 = 'Sheet1!B1'): ChangeSet {
   const aid = 'a1' as AnchorId;
   return {

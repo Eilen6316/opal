@@ -1,8 +1,10 @@
 /**
- * 容忍被"输出长度截断"的工具入参 JSON。
- * 模型一次产出过多改动时,propose 入参的 JSON 可能在中途被截断,直接 JSON.parse 会抛
- * "Unterminated string"。这里:正常能 parse 就原样返回;否则尽力抽出 plan + edits/ops 数组里
- * 【已闭合】的条目,丢弃残缺的尾巴 —— 把"整批失败"降级成"应用可解析的部分"。
+ * Tolerate tool-argument JSON truncated by output-length limits.
+ * When the model emits too many changes at once, the propose args JSON may be cut off
+ * mid-stream and plain JSON.parse throws "Unterminated string". Here: if it parses
+ * normally, return as-is; otherwise best-effort extract the plan plus the *fully closed*
+ * items in the edits/ops arrays and drop the incomplete tail — degrading "whole batch
+ * fails" into "apply the parsable portion".
  */
 export interface SalvagedProposal {
   plan?: string;
@@ -11,7 +13,7 @@ export interface SalvagedProposal {
   truncated: boolean;
 }
 
-/** 从原始(可能截断的)JSON 串里抽取某数组键下【已闭合】的对象条目。 */
+/** Extract the *fully closed* object items under a given array key from raw (possibly truncated) JSON. */
 function extractArrayItems(raw: string, key: string): unknown[] | undefined {
   const m = new RegExp('"' + key + '"\\s*:\\s*\\[').exec(raw);
   if (!m) return undefined;
@@ -30,21 +32,21 @@ function extractArrayItems(raw: string, key: string): unknown[] | undefined {
       if (c === '{') depth++;
       else if (c === '}') { depth--; if (depth === 0) { j++; closed = true; break; } }
     }
-    if (!closed) break; // 残缺尾巴,丢弃
+    if (!closed) break; // incomplete tail, drop it
     try { out.push(JSON.parse(raw.slice(i, j))); } catch { break; }
     i = j;
   }
   return out.length ? out : undefined;
 }
 
-/** 安全解析任意工具入参:失败(含截断)返回 {},绝不抛。 */
+/** Safely parse arbitrary tool args: on failure (incl. truncation) return {}; never throws. */
 export function safeParse(raw: string): Record<string, unknown> {
   try { return JSON.parse(raw || '{}') as Record<string, unknown>; } catch { return {}; }
 }
 
-/** 从(可能截断的)answer_user 入参里尽力取出 text,保住已生成的部分。 */
+/** Best-effort extract `text` from (possibly truncated) answer_user args, preserving what was generated. */
 export function salvageText(raw: string): string {
-  try { const o = JSON.parse(raw) as { text?: unknown }; if (o?.text != null) return String(o.text); } catch { /* 截断 → 正则兜底 */ }
+  try { const o = JSON.parse(raw) as { text?: unknown }; if (o?.text != null) return String(o.text); } catch { /* truncated → fall back to regex */ }
   const m = /"text"\s*:\s*"((?:[^"\\]|\\.)*)/.exec(raw);
   if (!m) return '';
   try { return JSON.parse('"' + m[1] + '"') as string; } catch { return (m[1] ?? '').replace(/\\n/g, '\n').replace(/\\t/g, '\t').replace(/\\"/g, '"'); }
@@ -55,7 +57,7 @@ export function salvageProposalArgs(raw: string): SalvagedProposal {
     const o = JSON.parse(raw) as Record<string, unknown>;
     return { ...o, truncated: false } as SalvagedProposal;
   } catch {
-    /* 截断 → 尽力抽取 */
+    /* truncated → best-effort extraction */
   }
   const planRaw = /"plan"\s*:\s*"((?:[^"\\]|\\.)*)"/.exec(raw)?.[1];
   let plan: string | undefined;

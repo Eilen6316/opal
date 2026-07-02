@@ -1,6 +1,6 @@
 /**
- * 轻量可审阅 diff —— 由 ChangeSet 的 edits 直接派生(逐 edit:锚点引用 + 徽标 + 标签 + after)。
- * JSON 友好,供 MCP/CLI 消费;不依赖适配器 shadowApply(适配器仍为桩),因此 headless 即可用。
+ * Lightweight reviewable diff — derived directly from the ChangeSet's edits (per edit: anchor ref + badge + label + after).
+ * JSON-friendly for MCP/CLI consumption; does not depend on adapter shadowApply (adapters are still stubs), so it works headless.
  */
 import type { AbstractStyle, ChangeSet, EditOp, LogicalAnchor } from '@otterpatch/core';
 
@@ -8,12 +8,12 @@ export type DiffBadge = 'add' | 'remove' | 'modify' | 'move';
 
 export interface OtterPatchDiffItem {
   editId: string;
-  ref: string; // 人类可读锚点引用(A1 / mxCell id / 文本引述)
-  kind: string; // EditOp 的 kind(供前端区分"写单元格"还是"结构/对象操作如插图表",别把后者的摘要当值写进格子)
+  ref: string; // Human-readable anchor reference (A1 / mxCell id / text quote)
+  kind: string; // EditOp kind (lets the frontend distinguish "write cell" from structural/object ops like insertChart, so it doesn't write the latter's summary into a cell as a value)
   badge: DiffBadge;
   label: string;
   after?: string;
-  style?: AbstractStyle; // 格式类改动(标红/加粗/字色/数字格式)的结构化样式,供前端直接套用
+  style?: AbstractStyle; // Structured style for formatting changes (highlight/bold/font color/number format), applied directly by the frontend
 }
 
 function styleSummary(s: AbstractStyle): string {

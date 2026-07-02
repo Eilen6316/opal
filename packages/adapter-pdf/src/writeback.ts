@@ -1,8 +1,10 @@
 /**
- * PdfFormWriteback —— PDF 表单填写写回(pdf-lib,MIT)。
- * ChangeSet 的 setValue 编辑(object 锚点 elementId = AcroForm 字段名,op.value = 新值)→ 只更新对应表单
- * 字段值,页面内容流保留。这是 PDF 上最干净、可审阅、可逆的"安全提交"能力(填表),契合 OtterPatch 哲学。
- * 任意正文重排不在此后端范围(PDF 无稳定文本部件)——交未来 model-roundtrip / 叠加注释。
+ * PdfFormWriteback — PDF form-fill writeback (pdf-lib, MIT).
+ * setValue edits in a ChangeSet (object anchor elementId = AcroForm field name, op.value = new value)
+ * update only the matching form field values; page content streams are preserved. This is the cleanest,
+ * reviewable, reversible "safe commit" capability on PDF (form filling), in line with the OtterPatch philosophy.
+ * Arbitrary body-text reflow is out of scope for this backend (PDF has no stable text parts) —
+ * deferred to a future model-roundtrip / overlay-annotation approach.
  */
 import type {
   ChangeSet,

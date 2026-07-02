@@ -6,8 +6,8 @@ const DOC: DocSnapshot = {
   blocks: [
     { style: '标题1', text: '项目周报', font: '宋体', size: 18, align: '居中' },
     { style: '正文', text: '本周核心进展:完成透视图内联渲染。整体进度符合预期。', font: '宋体', size: 11.5 },
-    { style: '标题3', text: '下周计划', font: '黑体', size: 14 }, // 故意 H1→H3 越级
-    { style: '正文', text: '一、补齐回归测试;二、校准澄清边界。', font: '仿宋', size: 12 }, // 故意与上面正文不同基线
+    { style: '标题3', text: '下周计划', font: '黑体', size: 14 }, // deliberate H1→H3 level skip
+    { style: '正文', text: '一、补齐回归测试;二、校准澄清边界。', font: '仿宋', size: 12 }, // deliberately different baseline from the body text above
     { style: '正文', text: '备注:本文档为演示数据。整体进度符合预期。', font: '宋体', size: 11.5 },
   ],
 };
@@ -44,7 +44,7 @@ test('get_outline:标题树 + 越级诊断', () => {
 test('get_style_usage:分布 + 正文基线不统一告警', () => {
   const r = getStyleUsage(DOC);
   assert.match(r, /宋体 · 11\.5pt/);
-  assert.match(r, /基线不统一/); // 正文有 宋体11.5 与 仿宋12 两种
+  assert.match(r, /基线不统一/); // body text has two baselines: 宋体 11.5 and 仿宋 12
 });
 
 test('execDocTool:路由与未知工具返回 null(交上层继续路由)', () => {

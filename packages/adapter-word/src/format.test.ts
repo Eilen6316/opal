@@ -1,6 +1,6 @@
 /**
- * 外科手术级格式写回:字符格式(rPr/rPrChange)、段落格式(pPr/pPrChange)、
- * 以及文本改写的 run 级保真(未触及 run 逐字节保留)。
+ * Surgical format writeback: character formatting (rPr/rPrChange), paragraph formatting (pPr/pPrChange),
+ * and run-level fidelity of text rewrites (untouched runs preserved byte-for-byte).
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -35,7 +35,7 @@ test('段落格式:居中 + 标题2 → pStyle/jc + pPrChange 存原 pPr', () =>
   assert.equal(changed, 1);
   assert.match(xml, /<w:pStyle w:val="Heading2"\/>/);
   assert.match(xml, /<w:jc w:val="center"\/>/);
-  assert.doesNotMatch(xml.split('<w:pPrChange')[0]!, /w:val="left"/); // 旧 left 仅存于修订内
+  assert.doesNotMatch(xml.split('<w:pPrChange')[0]!, /w:val="left"/); // old "left" survives only inside the revision record
   assert.match(xml, /<w:pPrChange w:id="\d+" w:author="A" w:date="D"><w:pPr><w:jc w:val="left"\/><\/w:pPr><\/w:pPrChange>/);
 });
 
@@ -47,12 +47,12 @@ test('段落格式:行距 1.5 + 底纹', () => {
 
 test('保真:文本改写只碰命中 run,加粗 run 逐字节保留', () => {
   const { xml } = redlineDocumentXml(doc('<w:r><w:rPr><w:b/></w:rPr><w:t>重要:</w:t></w:r><w:r><w:t>利润 100</w:t></w:r>'), [{ old: '100', new: '200' }], { author: 'A', date: 'D' });
-  assert.match(xml, /<w:r><w:rPr><w:b\/><\/w:rPr><w:t>重要:<\/w:t><\/w:r>/); // 未触及 run 原样
+  assert.match(xml, /<w:r><w:rPr><w:b\/><\/w:rPr><w:t>重要:<\/w:t><\/w:r>/); // untouched run preserved verbatim
   assert.match(xml, /<w:delText xml:space="preserve">100<\/w:delText>/);
   assert.match(xml, /<w:t xml:space="preserve">200<\/w:t>/);
 });
 
-// ── 端到端:setStyle 写回 .docx,只有 document.xml 变,含 rPrChange ──
+// ── End-to-end: setStyle written back to .docx, only document.xml changes, includes rPrChange ──
 const enc = (s: string): Uint8Array => new TextEncoder().encode(s);
 const dec = new TextDecoder();
 function makeDocx(text: string): Uint8Array {
@@ -82,19 +82,19 @@ test('写回:setStyle(加粗)→ rPrChange,仅 document.xml 变', async () => {
   assert.equal(Buffer.compare(Buffer.from(a['word/styles.xml']!), Buffer.from(b['word/styles.xml']!)), 0);
 });
 
-// ── 审查修复的回归 ──
+// ── Regressions from review fixes ──
 test('回归#1:命中含 <w:br/> 的复杂 run → 整段回退,不重复正文', () => {
   const { xml } = redlineDocumentXml(doc('<w:r><w:t>A</w:t></w:r><w:r><w:t>B</w:t><w:br/><w:t>C</w:t></w:r>'), [{ old: 'ABC', new: 'X' }]);
   assert.match(xml, /<w:delText xml:space="preserve">ABC<\/w:delText>/);
   assert.match(xml, /<w:t xml:space="preserve">X<\/w:t>/);
-  assert.doesNotMatch(xml, /<w:t[^>]*>B<\/w:t>/); // 旧 bug 会把复杂 run 的 B 原样留下 → 重复
+  assert.doesNotMatch(xml, /<w:t[^>]*>B<\/w:t>/); // old bug left the complex run's "B" in place → duplicated text
 });
 
 test('回归#4:自闭合空段 <w:p/> 不吞并下一段;块格式落到真实段', () => {
   const d = '<w:document><w:body><w:p w14:paraId="1"/><w:p><w:r><w:t>标题行</w:t></w:r></w:p></w:body></w:document>';
   const { xml, changed } = redlineDocumentXml(d, [{ kind: 'fmt', quote: '标题行', para: { block: 'h1' } }]);
   assert.equal(changed, 1);
-  assert.match(xml, /<w:p w14:paraId="1"\/>/); // 空段原样保留
+  assert.match(xml, /<w:p w14:paraId="1"\/>/); // empty paragraph preserved as-is
   assert.match(xml, /<w:pStyle w:val="Heading1"\/>/);
 });
 
@@ -104,8 +104,8 @@ test('回归#2:三位简写色 #f00 展开为 FF0000', () => {
 });
 
 test('回归#3:多格式 quote 改一词,未改词保留原 run 格式', () => {
-  // run1 斜体 "Hello " + run2 加粗 "World";把 Hello→Hi,未改的加粗 "World" 应仍带 <w:b/>(旧 bug 会被改成斜体)
+  // run1 italic "Hello " + run2 bold "World"; change Hello→Hi, the unchanged bold "World" must keep <w:b/> (old bug turned it italic)
   const { xml } = redlineDocumentXml(doc('<w:r><w:rPr><w:i/></w:rPr><w:t>Hello </w:t></w:r><w:r><w:rPr><w:b/></w:rPr><w:t>World</w:t></w:r>'), [{ old: 'Hello World', new: 'Hi World' }]);
-  assert.match(xml, /<w:r><w:rPr><w:b\/><\/w:rPr><w:t xml:space="preserve">World<\/w:t><\/w:r>/); // 未改的 World 仍加粗
+  assert.match(xml, /<w:r><w:rPr><w:b\/><\/w:rPr><w:t xml:space="preserve">World<\/w:t><\/w:r>/); // unchanged "World" still bold
   assert.match(xml, /<w:delText xml:space="preserve">Hello<\/w:delText>/);
 });

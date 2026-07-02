@@ -1,16 +1,18 @@
 /**
- * Word 文档影子校验器 —— Word 没有网格可重算,自检的核心是"锚点能不能落地":
- * 每条改文字/改格式的 quote 必须在原文里真实、唯一地存在,否则乐观应用会静默 no-op
- * (用户以为改了、其实没改)。把问题结构化回喂模型 → 同回合 propose→observe→repair 修正。
- * 只用 core 类型 + 纯字符串匹配,零适配器依赖。
+ * Shadow verifier for Word documents — Word has no grid to recompute, so the core
+ * self-check is "can each anchor land": every text/format edit's quote must exist
+ * literally and uniquely in the source text, otherwise optimistic apply silently
+ * no-ops (the user thinks it changed but it didn't). Issues are fed back to the
+ * model in structured form → fixed in the same propose→observe→repair round.
+ * Uses only core types + plain string matching; zero adapter dependencies.
  */
 import type { ChangeSet, VerifyReport } from '@otterpatch/core';
 
 const clip = (s: string): string => (s.length > 40 ? s.slice(0, 40) + '…' : s);
 
 /**
- * 由"文档全文"(propose 时喂给模型的 context)造一个自检器。
- * 返回签名兼容 @otterpatch/agent 的 ChangeSetVerifier。
+ * Build a verifier from the full document text (the context fed to the model at propose time).
+ * Returned signature is compatible with @otterpatch/agent's ChangeSetVerifier.
  */
 export function buildDocVerifier(docText: string): (cs: ChangeSet) => VerifyReport {
   return (cs: ChangeSet): VerifyReport => {
@@ -21,7 +23,7 @@ export function buildDocVerifier(docText: string): (cs: ChangeSet) => VerifyRepo
       const a = cs.anchors[e.target];
       const quote = a?.portable.kind === 'flow' ? a.portable.quote.text : '';
       const isStyle = e.op.kind === 'setStyle';
-      // 全文格式改动(all=true)没有 quote 锚点,天然可落地 —— 跳过定位校验
+      // Document-wide style edits (all=true) have no quote anchor and always land — skip location check
       if (isStyle && !quote) continue;
       if (!quote) {
         errors.push('有一条改动没有可定位的原文片段(quote 为空),无法落地');
@@ -32,15 +34,15 @@ export function buildDocVerifier(docText: string): (cs: ChangeSet) => VerifyRepo
         errors.push(`“${clip(quote)}” 不在文档原文中 —— 这条改动会静默失效(不会生效)。请把 quote 换成文档里真实存在的原文片段`);
         continue;
       }
-      // 唯一性:出现多次 → 定位可能落到错误位置(与系统提示规则②一致)
+      // Uniqueness: multiple occurrences → anchor may land at the wrong spot (matches system-prompt rule ②)
       if (docText.indexOf(quote, first + 1) >= 0) {
         warnings.push(`“${clip(quote)}” 在原文中出现多次,定位可能不唯一;请带上足够上下文使其唯一`);
       }
-      // 空改动:改后文字与原文完全相同
+      // Empty edit: replacement text is identical to the original
       if (e.op.kind === 'replaceText' && e.op.text === quote) {
         errors.push(`“${clip(quote)}” 的改后文字与原文完全相同 —— 这是一次空改动,没有任何效果`);
       }
-      // 同一 quote 被多条改动命中 → 可能相互覆盖
+      // Same quote hit by multiple edits → they may overwrite each other
       if (seen.has(quote)) warnings.push(`“${clip(quote)}” 被多条改动重复命中,可能相互覆盖`);
       seen.add(quote);
     }

@@ -1,9 +1,13 @@
 /**
- * DrawioSurgicalWriteback —— drawio 外科写回。
- * .drawio = <mxfile> 下多个 <diagram>;只重写被命中的 <diagram> 的 mxGraphModel,
- * 其余 diagram 及 diagram 之间的字节原样透传(与 OOXML 外科补丁同一哲学,只是"部件"换成 <diagram>)。
- * 每条 edit 经其锚点 portable(kind:'object' → slide=diagram 序号, elementId=mxCell id)定位。
- * 仅支持未压缩图;压缩图(deflateRaw+base64)抛错提示 compressed=false。
+ * DrawioSurgicalWriteback — surgical writeback for drawio.
+ * A .drawio file is an <mxfile> containing multiple <diagram> elements; only the
+ * mxGraphModel of the targeted <diagram> is rewritten, while untouched diagrams and
+ * the bytes between them pass through verbatim (same philosophy as the OOXML surgical
+ * patch, with <diagram> as the "part" unit).
+ * Each edit is located via its portable anchor (kind:'object' → slide = diagram index,
+ * elementId = mxCell id).
+ * Only uncompressed diagrams are supported; compressed ones (deflateRaw+base64) throw
+ * with a hint to set compressed=false.
  */
 import type {
   ChangeSet,
@@ -77,7 +81,7 @@ export class DrawioSurgicalWriteback implements WritebackBackend {
     const xml = dec.decode(doc.bytes);
     const matches = [...xml.matchAll(DIAGRAM_RE)];
 
-    // 按 diagram 序号分组 edits
+    // Group edits by diagram index
     const byDiagram = new Map<number, DrawioEdit[]>();
     for (const e of cs.edits) {
       const anchor = cs.anchors[e.target];
@@ -93,7 +97,7 @@ export class DrawioSurgicalWriteback implements WritebackBackend {
       list.push(mapOp(anchor, e.op));
     }
 
-    // 重组:gap 与未命中 diagram 字节透传,只重写命中 diagram
+    // Reassemble: pass through gap bytes and untouched diagrams verbatim; rewrite only targeted diagrams
     let out = '';
     let pos = 0;
     const touched: string[] = [];

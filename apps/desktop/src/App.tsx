@@ -12,6 +12,9 @@ import { DRAWIO_SHAPES } from './drawio-shapes.js';
 import type { UniSel, SheetHandle } from './UniverSheet.js';
 import type { RichDocHandle, DocFmt, WordSel } from './RichDoc.js';
 import { docxToHtml } from './docximport.js';
+import { akey, BATCH_RX, AUTO_BATCH_CAP } from './review-shared.js';
+import { ReviewBox } from './ReviewBox.js';
+import { AgentHome } from './AgentHome.js';
 import { Markdown } from './Markdown.js';
 import { chartToPngDataUrl, gridToChartSpec, buildChartGrid, specFromInline } from './chart.js';
 
@@ -19,29 +22,26 @@ import { chartToPngDataUrl, gridToChartSpec, buildChartGrid, specFromInline } fr
 interface GridOp { a1: string; value?: unknown; bg?: string; color?: string; bold?: boolean; numFmt?: string; note: string; before?: unknown; beforeState?: CellState; editId?: string }
 /** 提案到达时采集的整格改前状态(值/公式/填充/字色/加粗)——拒绝/原文视图按"改了哪个维度还原哪个维度"精确回放。 */
 interface CellState { v?: unknown; f?: string | null; bg?: string | null; color?: string | null; bold?: boolean }
-/** accepted 记账键:跨回合唯一(LLM 惯用 e0/e1,裸 editId 必撞名)。与 Word 的 domId 同构。 */
-const akey = (csId: string, editId: string): string => csId + '::' + editId;
-/** plan 是否声明了"分批"意图(超长输出的串行续批协议)。 */
-const BATCH_RX = /先做|第一批|前\s*\d+\s*[项处条个批]|下一批|分批|其余|剩余/;
-/** 自动续批的连续批次上限(防 plan 一直说"下一批"造成无限循环)。 */
-const AUTO_BATCH_CAP = 5;
+// akey / BATCH_RX / AUTO_BATCH_CAP moved to ./review-shared.ts (god-file decomposition).
 
 /** 由 applyExcelStructure 直接落网格的"结构/对象操作"kind —— 这些【不能】被 diffToOps 当作写单元格值
  *  (否则会把"插入图表"等的摘要文字写进格子);它们走 applyExcelStructure,不进 playOps。 */
 const ADV_KINDS = new Set(['insertRows', 'deleteRows', 'insertCols', 'deleteCols', 'mergeCells', 'unmergeCells', 'freezePanes', 'sortRange', 'deleteRange', 'conditionalFormat', 'dataValidation', 'autoFilter', 'insertChart']);
 
-/** 对话流里的一条消息(Cursor 式连续 thread)。 */
-type Turn =
+/** 对话流里的一条消息(Cursor 式连续 thread)。Exported for the extracted review components. */
+export type Turn =
   | { role: 'user'; text: string }
   | { role: 'assistant'; kind: 'answer'; text: string; reasoning?: string; streaming?: boolean }
   | { role: 'assistant'; kind: 'clarify'; questions: ClarifyQuestion[]; reasoning?: string; answered?: boolean; answerText?: string }
   | { role: 'assistant'; kind: 'diff'; diff: AgentDiff; ops: GridOp[]; board?: BoardPatch; word?: WordEdit[]; text?: string; reasoning?: string; reverted?: boolean; committed?: boolean; committedCount?: number };
+/** The diff-review turn shape consumed by ReviewBox. */
+export type DiffTurn = Extract<Turn, { kind: 'diff' }>;
 
 /** drawio 改动落到画板的句柄:editId→画板对象 id 映射 + 可重放的节点/连线(供逐条接受/拒绝)。 */
 interface BoardPatch { byEdit: Record<string, string>; objs: Array<{ editId: string; node?: BNode; edge?: BEdge }> }
 
 /** Word 一条改动:文本改写(replacement)或格式改动(style)。domId 为跨回合唯一的 DOM 标记(避免 editId 撞名误还原)。 */
-interface WordEdit { editId: string; domId: string; quote: string; replacement?: string; style?: DocFmt }
+export interface WordEdit { editId: string; domId: string; quote: string; replacement?: string; style?: DocFmt }
 
 /**
  * 把对话流投影成模型历史(Pi 的 projection 模式:thread 是单一数据源)。
@@ -482,13 +482,7 @@ const AMOUNT = ['4560', '4472', '57000', '4480', '4784'];
 const MARGIN = ['41%', '37%', '41%', '28%', '37%'];
 const ANOMALY_ROWIDX = 3;
 
-const QUICKS: { t: string; kind: 'do' | 'ask'; prompt: string }[] = [
-  { t: '补全缺失的计算列', kind: 'do', prompt: '检查并补齐缺失的计算列(如 金额=销量×单价、毛利率),用公式实现' },
-  { t: '标红异常值', kind: 'do', prompt: '找出各数值列里偏离均值过大的异常值,标红并列出问题清单' },
-  { t: '统一日期/数字格式', kind: 'do', prompt: '统一日期为 YYYY-MM-DD,把存成文本的数字转回数值,去除多余空格' },
-  { t: '这张表有什么问题?', kind: 'ask', prompt: '通览整张表,指出数据质量问题(缺失、异常、格式不一致等),给出清单' },
-  { t: '各产品销量合计?', kind: 'ask', prompt: '按产品分组,汇总每个产品的销量合计' },
-];
+// QUICKS moved into ./AgentHome.tsx (god-file decomposition).
 
 
 const MODEL_PROVIDERS = [
@@ -1545,35 +1539,7 @@ export function App() {
 
             <div className="rail-body">
               {thread.length === 0 && !busy && !sendErr ? (
-                <div className="agent-home">
-                  <div className="ai-intro">
-                    <img className="ai-mark" src="/favicon.png" alt="" />
-                    <div className="ai-title">{t('OtterPatch 表格助手')}</div>
-                    <div className="ai-sub">{t('圈选区域,问我问题或让我改表 —— 所有改动都先给你逐条审阅')}</div>
-                  </div>
-                  <div className="qs-label">{t('试试')}</div>
-                  <div className="qs-list">
-                    {QUICKS.map((q) => (
-                      <button key={q.t} className={'qs ' + q.kind} onClick={() => void send(q.prompt)}>
-                        <span className="qs-tag">{q.kind === 'do' ? t('改') : t('问')}</span>
-                        <span className="qs-t">{t(q.t)}</span>
-                      </button>
-                    ))}
-                  </div>
-                  {recent.length > 0 && (
-                    <>
-                      <div className="qs-label">{t('最近')}</div>
-                      <div className="recent-list">
-                        {recent.map((r, i) => (
-                          <button key={i} className="recent" onClick={() => setIntent(r.t)} title={r.t}>
-                            <IconClock size={13} />
-                            <span className="rt">{r.t}</span>
-                          </button>
-                        ))}
-                      </div>
-                    </>
-                  )}
-                </div>
+                <AgentHome recent={recent} onSend={(p) => { void send(p); }} onPick={setIntent} />
               ) : (
                 <div className="chat-thread">
                   {thread.length > 0 && (
@@ -1607,127 +1573,30 @@ export function App() {
                         </div>
                       );
                     const active = i === lastDiffIdx && !turn.committed && !turn.reverted;
-                    const d = turn.diff;
-                    const total = d.items.length;
-                    const ridx = Math.min(reviewIdx, total);
-                    const cur = active && ridx < total ? d.items[ridx] : undefined;
-                    const badgeText = (b: string): string => (b === 'add' ? t('新增') : b === 'remove' ? t('删除') : b === 'move' ? t('移动') : t('修改'));
                     return (
                       <div key={i} className="ai-msg">
                         <img className="ai-av" src="/favicon.png" alt="" />
                         <div className="ai-stack">
                           {turn.reasoning ? <ThinkingPanel reasoning={turn.reasoning} /> : null}
                           {turn.text?.trim() ? <div className="answer-bubble md"><Markdown text={turn.text} /></div> : null}
-                          <div className="reviewbox">
-                            <div className="rv-top">
-                              <span className="rv-title"><IconSelect size={13} /> {turn.board ? t('已绘制图表') : t('审阅改动')}</span>
-                              {d.intent ? <span className="rv-intent">{d.intent}</span> : null}
-                              <span className="grow" />
-                              {total > 0 && active && <span className="rv-count">{Math.min(ridx + (cur ? 1 : 0), total)}<i>/</i>{total}</span>}
-                            </div>
-                            {total > 0 ? (
-                              turn.board ? (
-                                <details className="rv-code">
-                                  <summary>{t('查看绘制代码')} · {total} {t('个对象')}</summary>
-                                  <pre>{d.items.map((it) => `${it.ref}${it.after ? '  ' + it.after : ''}  · ${it.label}`).join('\n')}</pre>
-                                </details>
-                              ) : (
-                                <div className="rv-gitdiff">
-                                  <div className="gd-head">{t('改动 diff')} · {total} {t('处')}</div>
-                                  {d.items.map((it, k) => {
-                                    const o = turn.ops.find((x) => x.editId === it.editId);
-                                    const w = turn.word?.find((x) => x.editId === it.editId);
-                                    const isFmt = !!(it.style || w?.style);
-                                    const refShort = it.ref.replace(/^.*!/, '');
-                                    const oldV = w ? (w.quote || '') : (!it.style && o?.before != null && String(o.before) !== '' ? String(o.before) : '');
-                                    const newV = w ? (w.replacement ?? '') : (it.after ?? '');
-                                    const fmtDesc = it.after || (w?.style ? Object.keys(w.style).join('/') : '') || t('改格式');
-                                    const cur = active && k === ridx;
-                                    return (
-                                      <div key={it.editId} data-cid={w?.domId} className={'gd-hunk' + (cur ? ' cur' : '') + (w && hoverCid && hoverCid === w.domId ? ' is-linked' : '') + (accepted.has(akey(d.changeSetId, it.editId)) ? '' : ' gd-rej')}
-                                        onMouseEnter={() => { if (w) { setHoverCid(w.domId); wordRef.current?.linkChange(w.domId); } }}
-                                        onMouseLeave={() => { setHoverCid(null); wordRef.current?.linkChange(null); }}
-                                        onClick={() => { if (active) setReviewIdx(k); if (w) wordRef.current?.activateChange(w.domId); }} title={it.label}>
-                                        <div className="gd-ref"><span className="gd-at">@@</span> {refShort} <span className="gd-lbl">{it.label}</span></div>
-                                        {isFmt ? (
-                                          <div className="gd-line fmt"><span className="gd-sign">~</span>{fmtDesc}{oldV ? <span className="gd-ctx">　「{oldV.length > 42 ? oldV.slice(0, 42) + '…' : oldV}」</span> : null}</div>
-                                        ) : (<>
-                                          {oldV ? <div className="gd-line del"><span className="gd-sign">-</span>{oldV}</div> : null}
-                                          {newV ? <div className="gd-line add"><span className="gd-sign">+</span>{newV}</div> : null}
-                                        </>)}
-                                      </div>
-                                    );
-                                  })}
-                                </div>
-                              )
-                            ) : null}
-                            {total > 0 && active && <div className="rv-prog"><div className="rv-prog-fill" style={{ width: `${(ridx / total) * 100}%` }} /></div>}
-
-                            {total === 0 ? (
-                              <div className="rv-empty">{t('Agent 未提出改动')}</div>
-                            ) : turn.committed ? (
-                              <div className="rv-final ok"><IconCheck size={15} /> {t('已采纳')}{turn.committedCount ? ` · ${turn.committedCount} ${t('处')}` : ''}<span className="grow" />
-                                {/* 分批任务不断链:plan 说了"先做第一批/前 N 处"之类,采纳后一键续发或开自动续批 */}
-                                {BATCH_RX.test(d.intent ?? '') ? (
-                                  <>
-                                    <label className="rv-auto" title={t('接受后自动续发"下一批",每批仍逐条可审')}>
-                                      <input type="checkbox" checked={autoBatch} onChange={(e) => setAutoBatch(e.target.checked)} />⚡{t('自动续批')}
-                                    </label>
-                                    <button className="btn solid rv-next" onClick={() => { void send('下一批'); }}>{t('继续下一批')} ›</button>
-                                  </>
-                                ) : null}
-                                <button className="link-btn" onClick={() => revertTurn(i)}>{t('撤销')}</button></div>
-                            ) : turn.reverted ? (
-                              <div className="rv-final dim">↩ {t('已撤销')}</div>
-                            ) : cur ? (
-                              <>
-                                <div className={'rv-card' + (accepted.has(akey(d.changeSetId, cur.editId)) ? '' : ' rejected')}>
-                                  <div className="rv-card-h">
-                                    <span className={'rv-badge ' + cur.badge}>{badgeText(cur.badge)}</span>
-                                    <span className="rv-ref">{cur.ref}</span>
-                                  </div>
-                                  {(() => {
-                                    if (cur.style) return cur.after ? <div className="rv-fmt">{cur.after}</div> : null; // 格式改动:展示格式说明
-                                    const op = turn.ops.find((o) => o.editId === cur.editId);
-                                    const w = turn.word?.find((x) => x.editId === cur.editId);
-                                    const before = w ? w.quote : op?.before;
-                                    const after = w ? w.replacement : cur.after;
-                                    const hasOld = cur.badge !== 'add' && before != null && String(before) !== '';
-                                    const hasNew = cur.badge !== 'remove' && after != null;
-                                    if (!hasOld && !hasNew) return null;
-                                    return (
-                                      <div className="rv-diff">
-                                        {hasOld ? <div className="rv-old"><span className="rv-sign">−</span>{String(before)}</div> : null}
-                                        {hasNew ? <div className="rv-new"><span className="rv-sign">+</span>{after}</div> : null}
-                                      </div>
-                                    );
-                                  })()}
-                                  <div className="rv-why">{cur.label}</div>
-                                </div>
-                                <div className="rv-acts">
-                                  <button className="rv-step" disabled={ridx <= 0} onClick={() => setReviewIdx(Math.max(0, ridx - 1))} title={t('上一处')}><IconChevron size={14} /></button>
-                                  <button className="btn no" onClick={() => rejectItem(turn, ridx)}><IconX size={14} /> {t('拒绝')}</button>
-                                  <button className="btn ok" onClick={() => acceptItem(turn, ridx)}><IconCheck size={14} /> {t('接受')}</button>
-                                  <span className="grow" />
-                                  {BATCH_RX.test(d.intent ?? '') ? (
-                                    <label className="rv-auto" title={t('接受后自动续发"下一批",每批仍逐条可审')}>
-                                      <input type="checkbox" checked={autoBatch} onChange={(e) => setAutoBatch(e.target.checked)} />⚡{t('自动续批')}
-                                    </label>
-                                  ) : null}
-                                  <button className="btn solid" onClick={() => acceptAll(turn, i)}>{t('全部接受')}{total > 1 ? ` · ${total}` : ''}</button>
-                                </div>
-                              </>
-                            ) : active ? (
-                              <div className="rv-acts done">
-                                <span className="rv-donen">{t('已逐条过完')} · {d.items.filter((x) => accepted.has(akey(d.changeSetId, x.editId))).length}/{total}</span>
-                                <span className="grow" />
-                                <button className="rv-step" onClick={() => setReviewIdx(0)} title={t('重看')}><IconUndo size={14} /></button>
-                                <button className="btn solid" onClick={() => acceptAll(turn, i)}><IconCheck size={14} /> {t('全部接受')}</button>
-                              </div>
-                            ) : (
-                              <div className="rv-final dim">{total} {t('处改动')}<span className="grow" /><button className="link-btn" onClick={() => revertTurn(i)}>↩ {t('撤销改动')}</button></div>
-                            )}
-                          </div>
+                          <ReviewBox
+                            turn={turn}
+                            index={i}
+                            active={active}
+                            reviewIdx={reviewIdx}
+                            accepted={accepted}
+                            hoverCid={hoverCid}
+                            autoBatch={autoBatch}
+                            wordRef={wordRef}
+                            onSetReviewIdx={setReviewIdx}
+                            onHoverCid={setHoverCid}
+                            onAccept={(k) => acceptItem(turn, k)}
+                            onReject={(k) => rejectItem(turn, k)}
+                            onAcceptAll={() => acceptAll(turn, i)}
+                            onRevertTurn={() => revertTurn(i)}
+                            onSend={(s) => { void send(s); }}
+                            onSetAutoBatch={setAutoBatch}
+                          />
                         </div>
                       </div>
                     );

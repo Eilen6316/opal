@@ -1,7 +1,9 @@
 /**
- * 分级审批 —— 把"什么算危险"(riskOf,按 EditOp 机械判定)与"危险了怎么办"(ApprovalPolicy)解耦。
- * 借鉴 codex 的分级审批策略层(与执行循环解耦),按 OtterPatch 文档操作域改写:不跑 shell,故分级的是
- * "破坏性文档操作"(删行/删区/删对象/逃生舱原生 op)。安全编辑自动放行,破坏性操作默认需人工批准。
+ * Tiered approval — decouples "what counts as dangerous" (riskOf, mechanically determined per EditOp)
+ * from "what to do about it" (ApprovalPolicy). Modeled on codex's tiered approval policy layer
+ * (decoupled from the execution loop), adapted to OtterPatch's document-operation domain: no shell is
+ * run, so what gets tiered are "destructive document operations" (delete rows/ranges/objects, and
+ * escape-hatch raw host ops). Safe edits auto-pass; destructive ops require human approval by default.
  */
 import type { ChangeSet, Edit, EditId, EditOp, EditOpKind } from './changeset.js';
 
@@ -9,9 +11,9 @@ export type RiskLevel = 'safe' | 'caution' | 'destructive';
 
 const ORDER: Record<RiskLevel, number> = { safe: 0, caution: 1, destructive: 2 };
 
-// 全 kind 覆盖(Record 强制穷举:新增 EditOpKind 时编译期逼你分级)。
+// Covers every kind (Record enforces exhaustiveness: adding an EditOpKind forces you to classify it at compile time).
 const RISK_BY_KIND: Record<EditOpKind, RiskLevel> = {
-  // 安全:作用域小、可逆(随附 inverse)、非结构性
+  // Safe: small scope, reversible (carries an inverse), non-structural
   setValue: 'safe',
   setFormula: 'safe',
   replaceText: 'safe',
@@ -22,7 +24,7 @@ const RISK_BY_KIND: Record<EditOpKind, RiskLevel> = {
   setParagraphStyle: 'safe',
   moveObject: 'safe',
   setObjectProps: 'safe',
-  // 谨慎:结构性新增 / 重排,影响引用但不删数据
+  // Caution: structural insertion/reordering — affects references but deletes no data
   insertRows: 'caution',
   insertCols: 'caution',
   sortRange: 'caution',
@@ -34,7 +36,7 @@ const RISK_BY_KIND: Record<EditOpKind, RiskLevel> = {
   dataValidation: 'safe',
   insertChart: 'caution',
   addObject: 'caution',
-  // 破坏性:删除数据 / 级联 / 不透明原生 op
+  // Destructive: deletes data / cascades / opaque raw host ops
   deleteRange: 'destructive',
   deleteRows: 'destructive',
   deleteCols: 'destructive',
@@ -49,7 +51,7 @@ export function riskOf(op: EditOp): RiskLevel {
 const maxLevel = (a: RiskLevel, b: RiskLevel): RiskLevel => (ORDER[b] > ORDER[a] ? b : a);
 
 export interface ChangeSetRisk {
-  level: RiskLevel; // 整个 ChangeSet 的最高风险
+  level: RiskLevel; // Highest risk across the whole ChangeSet
   counts: Record<RiskLevel, number>;
   byEdit: Array<{ editId: EditId; level: RiskLevel }>;
   destructive: EditId[];
@@ -70,12 +72,12 @@ export function assessChangeSet(cs: ChangeSet): ChangeSetRisk {
   return { level, counts, byEdit, destructive };
 }
 
-/** 审批策略:列出的风险级别自动放行,其余需人工批准(可配置 → 与执行循环解耦)。 */
+/** Approval policy: listed risk levels auto-pass; everything else needs human approval (configurable → decoupled from the execution loop). */
 export interface ApprovalPolicy {
   autoApprove: RiskLevel[];
 }
-export const DEFAULT_POLICY: ApprovalPolicy = { autoApprove: ['safe', 'caution'] }; // 破坏性需人工
-export const STRICT_POLICY: ApprovalPolicy = { autoApprove: ['safe'] }; // 仅安全自动
+export const DEFAULT_POLICY: ApprovalPolicy = { autoApprove: ['safe', 'caution'] }; // Destructive requires human approval
+export const STRICT_POLICY: ApprovalPolicy = { autoApprove: ['safe'] }; // Only safe auto-passes
 export const TRUSTED_POLICY: ApprovalPolicy = { autoApprove: ['safe', 'caution', 'destructive'] };
 
 export interface ApprovalDecision {

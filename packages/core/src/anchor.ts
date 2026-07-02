@@ -1,17 +1,17 @@
 /**
- * SemanticAnchor —— 抽象层的"位置"货币。
- * 身份透明、寻址不透明(opaque ref)、漂移单点收敛(唯一 rebase)。
- * 详见 .work/abstraction-layer.md §1。
+ * SemanticAnchor — the abstraction layer's "position" currency.
+ * Transparent identity, opaque addressing (opaque ref), drift converges at a single point (the one rebase).
+ * See .work/abstraction-layer.md §1.
  */
 
 export type HostId = string & { readonly __brand: 'HostId' };
 export type DocRev = number & { readonly __brand: 'DocRev' };
 export type AnchorId = string & { readonly __brand: 'AnchorId' };
 
-/** 寻址族:仅供能力匹配 / 技能可用性 / diff 归类。【绝不参与解析】。 */
+/** Addressing family: only for capability matching / skill availability / diff grouping. NEVER used in resolution. */
 export type AnchorKind = 'grid' | 'flow' | 'object' | 'composite';
 
-/** 可移植兜底。核心只存不读,ref 失效或跨会话时消费。专治 Word 无稳定段落 id。 */
+/** Portable fallback. Core stores it without reading it; consumed when ref goes stale or across sessions. Exists because Word has no stable paragraph ids. */
 export type PortableLocator =
   | { kind: 'grid'; sheet: string; a1: string }
   | {
@@ -23,14 +23,14 @@ export type PortableLocator =
   | { kind: 'object'; slide: number; elementId: string }
   | { kind: 'composite'; parts: PortableLocator[] };
 
-/** 纯数据、可序列化、可持久化、可跨会话。管线里流通的就是它。 */
+/** Pure data: serializable, persistable, cross-session. This is what flows through the pipeline. */
 export interface LogicalAnchor<Ref = unknown> {
   readonly id: AnchorId;
-  readonly hostId: HostId; // 谁铸造 → 谁解析
-  readonly kind: AnchorKind; // 粗粒度寻址族(能力匹配用,不参与解析)
-  readonly ref: Ref; // 适配器私有寻址载荷(opaque)
-  readonly portable: PortableLocator; // ref 失效时兜底
-  readonly baseRev: DocRev; // != 当前 rev 则解析前必须 rebase
+  readonly hostId: HostId; // whoever minted it resolves it
+  readonly kind: AnchorKind; // coarse addressing family (capability matching only, not resolution)
+  readonly ref: Ref; // adapter-private addressing payload (opaque)
+  readonly portable: PortableLocator; // fallback when ref goes stale
+  readonly baseRev: DocRev; // if != current rev, must rebase before resolving
 }
 
 export type PixelRect = { x: number; y: number; w: number; h: number };
@@ -53,21 +53,21 @@ export type Unsubscribe = () => void;
 
 export interface ResolvedAnchor {
   readonly anchor: LogicalAnchor;
-  readonly pixelRects: PixelRect[]; // 文本跨行、区域跨页 → 多段
-  readonly nativeHandle: unknown; // 对核心不透明
-  readonly live: boolean; // false=已 detached,UI 提示重新圈选
+  readonly pixelRects: PixelRect[]; // text wrapping lines / regions spanning pages → multiple rects
+  readonly nativeHandle: unknown; // opaque to core
+  readonly live: boolean; // false = detached; UI prompts user to re-select
   readonly rev: DocRev;
 }
 
-/** 富 RebaseResult:状态对核心 legible —— 直接驱动 UI。抗漂移唯一真理来源的产物。 */
+/** Rich RebaseResult: status legible to core — drives UI directly. Output of the single source of truth for drift resistance. */
 export type RebaseResult =
-  | { status: 'tracked'; anchor: LogicalAnchor } // 底座自动平移,零成本,语义不变
-  | { status: 'remapped'; anchor: LogicalAnchor } // 经结构路径精确重锚
-  | { status: 'shifted'; anchor: LogicalAnchor; warning: string } // 平移成功但语义可能变 → 软警示
-  | { status: 'fuzzy'; anchor: LogicalAnchor; confidence: number } // 指纹模糊匹配 → 需人复核
+  | { status: 'tracked'; anchor: LogicalAnchor } // host substrate auto-shifted it: zero cost, semantics unchanged
+  | { status: 'remapped'; anchor: LogicalAnchor } // precisely re-anchored via structural path
+  | { status: 'shifted'; anchor: LogicalAnchor; warning: string } // shift succeeded but semantics may have changed → soft warning
+  | { status: 'fuzzy'; anchor: LogicalAnchor; confidence: number } // fingerprint fuzzy match → needs human review
   | { status: 'detached'; reason: 'deleted' | 'rev-gap' | 'unresolvable' };
 
-/** 锚点生命周期服务:每个适配器实现一份。核心只调这 7 个签名。 */
+/** Anchor lifecycle service: one implementation per adapter. Core calls only these 7 signatures. */
 export interface AnchorService {
   fromPixels(sel: PixelSelection): Promise<LogicalAnchor>;
   toPixels(a: LogicalAnchor): Promise<PixelRect[]>;
@@ -75,7 +75,7 @@ export interface AnchorService {
     a: LogicalAnchor,
     atRev: DocRev,
   ): Promise<ResolvedAnchor | { status: 'detached'; reason: string }>;
-  /** ★抗漂移唯一真理来源:底座红利→结构重锚→指纹模糊→detached 分层降级。 */
+  /** ★ Single source of truth for drift resistance: layered degradation — host substrate freebie → structural re-anchor → fingerprint fuzzy match → detached. */
   rebase(a: LogicalAnchor, log: MutationLog, target: DocRev): RebaseResult;
   track(a: LogicalAnchor, onShift: (next: LogicalAnchor) => void): Unsubscribe;
   rehydrate(

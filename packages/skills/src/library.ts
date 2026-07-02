@@ -1,6 +1,7 @@
 /**
- * SkillLibrary —— 技能中枢:按格式 + 意图匹配技能,渲染成可注入系统提示的片段(渐进披露 L0),
- * 也可导出为 MCP 工具清单("技能即基础设施")。
+ * SkillLibrary — skill hub: matches skills by format + intent, renders a fragment injectable
+ * into the system prompt (progressive disclosure L0), and can also export an MCP tool list
+ * ("skills as infrastructure").
  */
 import { parseSkillMd, type SkillCard } from './parse.js';
 
@@ -22,14 +23,14 @@ export class SkillLibrary {
     return this.cards;
   }
 
-  /** 安装一个外部专用技能(SKILL.md 文本)。宿主从目录/URL 读到内容后调用。 */
+  /** Install an external specialized skill (SKILL.md text). Called by the host after reading content from a directory/URL. */
   install(md: string, source?: string): SkillCard {
     const card = parseSkillMd(md, source);
     this.add(card);
     return card;
   }
 
-  /** 按格式(强信号)+ 意图关键词(弱信号)排序,返回命中技能。 */
+  /** Rank by format (strong signal) + intent keywords (weak signal); return matching skills. */
   match(intent: string, format?: string): SkillCard[] {
     const lc = (intent || '').toLowerCase();
     return this.cards
@@ -40,7 +41,7 @@ export class SkillLibrary {
         for (const k of c.keywords) if (k && lc.includes(k.toLowerCase())) kw += 1;
         score += kw;
         for (const f of c.formats) if (f.length > 1 && lc.includes(f)) score += 1;
-        if (kw > 0 && c.instructions) score += 0.5; // 意图真命中关键词时,带打法手册的更可执行 → 决胜优先;仅格式命中不加(通用卡片保持在前)
+        if (kw > 0 && c.instructions) score += 0.5; // When intent actually hits keywords, skills with a playbook are more actionable → tie-break in their favor; no bonus for format-only hits (generic cards stay first)
         return { c, score };
       })
       .filter((x) => x.score > 0)
@@ -48,12 +49,12 @@ export class SkillLibrary {
       .map((x) => x.c);
   }
 
-  /** 按名字取技能的 L1 正文(打法手册),供 load_skill 工具执行。 */
+  /** Get a skill's L1 body (playbook) by name, for the load_skill tool to execute. */
   instructionsFor(name: string): string | undefined {
     return this.cards.find((c) => c.name === name)?.instructions;
   }
 
-  /** 注入 Agent 系统提示的 L0 片段:列出最相关技能的 name+description;带手册的标注可 load_skill。 */
+  /** L0 fragment injected into the Agent system prompt: lists name+description of the most relevant skills; those with a playbook are marked as load_skill-able. */
   render(format?: string, intent?: string, limit = 5): string {
     const hit = this.match(intent ?? '', format);
     const list = hit.length ? hit : this.cards.filter((c) => !format || c.formats.includes(format));
@@ -62,7 +63,7 @@ export class SkillLibrary {
     return '可用技能:\n' + lines.join('\n') + (list.slice(0, limit).some((c) => c.instructions) ? '\n标注【有打法手册】的技能与当前任务相关时,【动手前先调 load_skill 加载其检查清单与惯用法】,按手册执行。' : '');
   }
 
-  /** 技能即 MCP 工具:供 Agent/外部以工具形式调用。 */
+  /** Skills as MCP tools: callable by the Agent/external clients in tool form. */
   toMcpTools(): Array<{ name: string; description: string; inputSchema: object }> {
     return this.cards.map((c) => ({
       name: 'skill__' + c.name.replace(/[^a-zA-Z0-9_]/g, '_'),

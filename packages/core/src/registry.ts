@@ -1,14 +1,14 @@
 /**
- * 适配器注册表 —— 按格式路由到 HostAdapter,避免硬编码 new UniverAdapter。
- * 新格式(Excel/Word/PPT/drawio/…)只需 register 一个 AdapterRegistration。
- * 多候选时按 priority 降序(markitdown 式优先级)。
+ * Adapter registry — routes by format to a HostAdapter, avoiding hardcoded `new UniverAdapter`.
+ * New formats (Excel/Word/PPT/drawio/…) only need to register one AdapterRegistration.
+ * With multiple candidates, sorted by priority descending (markitdown-style priority).
  */
 import type { HostAdapter } from './adapter.js';
 
 export interface AdapterRegistration {
   format: string; // 'excel' | 'word' | 'ppt' | 'drawio' | (string & {})
-  engines?: string[]; // 引擎提示:'univer' | 'prosemirror' | 'drawio' …
-  priority?: number; // 多候选时高者优先(默认 0)
+  engines?: string[]; // engine hints: 'univer' | 'prosemirror' | 'drawio' …
+  priority?: number; // higher wins among multiple candidates (default 0)
   create(hostId: string): HostAdapter;
 }
 
@@ -20,12 +20,12 @@ export class AdapterRegistry {
     this.regs.sort((a, b) => (b.priority ?? 0) - (a.priority ?? 0));
   }
 
-  /** 按格式解析注册项(取优先级最高的匹配)。无匹配返回 undefined。 */
+  /** Resolve a registration by format (highest-priority match). Returns undefined if none. */
   resolve(format: string): AdapterRegistration | undefined {
     return this.regs.find((r) => r.format === format);
   }
 
-  /** 直接造一个适配器实例。无匹配抛错。 */
+  /** Create an adapter instance directly. Throws if no match. */
   create(format: string, hostId: string): HostAdapter {
     const r = this.resolve(format);
     if (!r) throw new Error(`AdapterRegistry: no adapter registered for format "${format}"`);

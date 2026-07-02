@@ -1,6 +1,7 @@
 /**
- * OtterPatchEvent —— headless JSON 事件流。propose → diff → commit 每个阶段发一条结构化事件,
- * 供 MCP server / CLI / 远端宿主流式消费(可直接 JSON.stringify 逐行输出)。
+ * OtterPatchEvent — headless JSON event stream. Each stage of propose → diff → commit emits one
+ * structured event for streaming consumption by MCP servers / CLI / remote hosts (can be
+ * JSON.stringify'd line by line).
  */
 import type { OtterPatchDiff } from './diff.js';
 

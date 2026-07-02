@@ -1,14 +1,15 @@
 /**
- * SKILL.md 解析:YAML frontmatter(name/description[/formats/keywords])+ Markdown 正文。
- * 兼容 Anthropic Agent Skills 与 Claude Code 写的 SKILL.md(渐进披露:L0=name/description,L1=正文)。
+ * SKILL.md parsing: YAML frontmatter (name/description[/formats/keywords]) + Markdown body.
+ * Compatible with SKILL.md files written by Anthropic Agent Skills and Claude Code
+ * (progressive disclosure: L0 = name/description, L1 = body).
  */
 export interface SkillCard {
   name: string; // L0
-  description: string; // L0(Agent 据此匹配意图)
-  formats: string[]; // 适用格式标签:excel/xlsx/word/docx/ppt/pptx/pdf/drawio/ui…
-  keywords: string[]; // 命中意图用
-  instructions?: string; // L1:SKILL.md 正文(命中后才需要)
-  source?: string; // built-in / 文件路径 / URL
+  description: string; // L0 (the Agent matches intent against this)
+  formats: string[]; // applicable format tags: excel/xlsx/word/docx/ppt/pptx/pdf/drawio/ui…
+  keywords: string[]; // used for intent matching
+  instructions?: string; // L1: SKILL.md body (only needed after a match)
+  source?: string; // built-in / file path / URL
 }
 
 function inferFormats(name: string, explicit: string[]): string[] {
@@ -53,7 +54,7 @@ export function parseSkillMd(md: string, source?: string): SkillCard {
     if (!km) continue;
     const key = km[1]!;
     let val = km[2]!.trim();
-    // YAML 折叠块(> 或 |):收集后续缩进行
+    // YAML block scalar (> or |): collect subsequent indented lines
     if (val === '' || val === '>' || val === '|' || val === '>-' || val === '|-') {
       const buf: string[] = [];
       while (i + 1 < lines.length && (lines[i + 1]!.startsWith(' ') || lines[i + 1]!.trim() === '')) {

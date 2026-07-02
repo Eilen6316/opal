@@ -1,10 +1,12 @@
 /**
- * GridChangeSetEngine —— 网格(Excel)的真实 ChangeSetEngine:把 ChangeSet 应用到内存影子网格,
- * 算出每个单元格真实的 before/after,递归求值公式(支持单元格引用 / + - * / ( ) / SUM·AVERAGE·MIN·MAX·COUNT),
- * 捕获逐 edit 反演,产出可审阅 DiffView(batch → leaf),并把公式重算结果放进 effects。
- * rebase:无结构性变更(插删行)→ tracked(锚点零成本平移)。
+ * GridChangeSetEngine — the real ChangeSetEngine for grids (Excel): applies a ChangeSet to an
+ * in-memory shadow grid, computes each cell's true before/after, recursively evaluates formulas
+ * (cell refs / + - * / ( ) / SUM·AVERAGE·MIN·MAX·COUNT), captures per-edit inverses, produces a
+ * reviewable DiffView (batch → leaf), and puts formula-recalc results into effects.
+ * rebase: no structural change (row insert/delete) → tracked (anchors shift at zero cost).
  *
- * 这让 diff 不再"从 edits 直推",而是反映影子里真实的值与公式重算 —— OtterPatch 抽象层 §2/§3 的落地。
+ * This makes the diff reflect the shadow's real values and formula recalc rather than being
+ * derived straight from edits — the concrete realization of OtterPatch abstraction layer §2/§3.
  */
 import type {
   CellValue,
@@ -70,7 +72,7 @@ function expandRange(r: string): string[] {
   return out;
 }
 
-/** 递归公式求值;get 解析单元格(含其公式),depth 防环。 */
+/** Recursive formula evaluation; `get` resolves a cell (including its formula), depth guards against cycles. */
 function evalFormula(formula: string, get: (a1: string) => number): number {
   const expr = formula.replace(/^=/, '');
   let pos = 0;
@@ -185,7 +187,7 @@ const toNum = (v: CellValue | undefined): number => {
   return Number.isFinite(n) ? n : 0;
 };
 
-/** 解析单元格的数值(含公式递归,depth 防环)。 */
+/** Resolve a cell's numeric value (recursing into formulas; depth guards against cycles). */
 function cellNumber(grid: GridShadow, a1: string, depth = 0): number {
   const cell = grid.get(a1);
   if (!cell) return 0;
@@ -234,7 +236,7 @@ export class GridChangeSetEngine implements ChangeSetEngine<GridShadow> {
       if (e.op.kind === 'setValue') grid.set(a1, { value: e.op.value });
       else if (e.op.kind === 'setFormula') grid.set(a1, { formula: e.op.formula });
       else if (e.op.kind === 'deleteRange') grid.set(a1, { value: null });
-      // style/number-format 等:不改值,仅作为 diff 节点呈现
+      // style/number-format etc.: value unchanged, only surfaced as a diff node
 
       const afterPV = cellPreview(grid, grid.get(a1) ?? {});
       children.push({
@@ -250,7 +252,7 @@ export class GridChangeSetEngine implements ChangeSetEngine<GridShadow> {
       });
     }
 
-    // 公式重算:收集所有公式单元格的当前计算值(依赖已在 cellNumber 里递归解析)
+    // Formula recalc: collect current computed values of all formula cells (dependencies are resolved recursively in cellNumber)
     const recalculated: CellValue[][] = [];
     for (const [a1, cell] of grid) {
       if (cell.formula) recalculated.push([a1, evalFormula(cell.formula, (ref) => cellNumber(grid, ref))]);
@@ -281,7 +283,7 @@ export class GridChangeSetEngine implements ChangeSetEngine<GridShadow> {
   }
 
   rebase(cs: ChangeSet, log: MutationLog, target: DocRev): { cs: ChangeSet; broken: EditId[] } {
-    // 无结构性变更(插删行/列)→ tracked:锚点零成本平移,edits 原样;有则交给适配器 AnchorService(此处保守标 broken)
+    // No structural change (row/col insert/delete) → tracked: anchors shift at zero cost, edits untouched; otherwise defer to the adapter's AnchorService (conservatively marked broken here)
     const structural = Array.isArray(log) && log.some((m) => typeof m === 'object' && m !== null && 'structural' in (m as Record<string, unknown>));
     if (!structural) return { cs: { ...cs, baseRev: target }, broken: [] };
     return { cs: { ...cs, baseRev: target }, broken: cs.edits.map((e) => e.id) };

@@ -1,10 +1,11 @@
 /**
- * OpenAICompatModelClient —— 覆盖所有 OpenAI 兼容接口的厂商:
- * ChatGPT/OpenAI、DeepSeek、智谱 GLM、Kimi(Moonshot)、豆包(火山方舟)、MiniMax、Gemini(OpenAI 兼容端点)。
- * 用 function-call 按 dialect 产出受约束的工具调用。BYOK:apiKey 各厂商自带;baseURL 区分厂商。
+ * OpenAICompatModelClient — covers all vendors with OpenAI-compatible APIs:
+ * ChatGPT/OpenAI, DeepSeek, Zhipu GLM, Kimi (Moonshot), Doubao (Volcengine Ark), MiniMax, Gemini (OpenAI-compatible endpoint).
+ * Uses function-calls to produce constrained tool calls per dialect. BYOK: each vendor supplies its own apiKey; baseURL selects the vendor.
  *
- * forcedTool:支持的厂商用 tool_choice 强制指定函数(可靠);不支持的(Kimi/MiniMax/DeepSeek 思考模型)
- * 降级为 tool_choice:'auto' + 追加一条提示消息(否则强制工具会 HTTP 400)。
+ * forcedTool: vendors that support it use tool_choice to force the function (reliable); unsupported ones
+ * (Kimi/MiniMax/DeepSeek reasoning models) fall back to tool_choice:'auto' + an extra nudge message
+ * (forcing the tool would otherwise return HTTP 400).
  */
 import OpenAI from 'openai';
 import type { ChangeSet } from '@otterpatch/core';
@@ -18,16 +19,16 @@ export interface OpenAICompatOptions {
   model: string;
   baseURL?: string;
   maxTokens?: number;
-  /** 是否支持 tool_choice 强制指定函数;false 则降级(默认 true)。 */
+  /** Whether tool_choice can force a specific function; false triggers the fallback (default true). */
   forcedTool?: boolean;
 }
 
 /**
- * 发送前归一化消息序列,防止前端 thread 被快速连发/请求失败等写坏后,触发 provider 的
- * "roles must alternate" / "first message must be user" 400/500:
- * - 丢弃空内容的非系统消息;
- * - 合并相邻同角色消息(content 换行拼接);
- * - system 之后首条若为 assistant 则丢弃(provider 要求 user 起头)。
+ * Normalize the message sequence before sending, so a frontend thread corrupted by rapid resends /
+ * failed requests does not trigger provider "roles must alternate" / "first message must be user" 400/500s:
+ * - drop non-system messages with empty content;
+ * - merge adjacent same-role messages (content joined with newline);
+ * - drop the first message after system if it is assistant (providers require the conversation to start with user).
  */
 export function normalizeMessages(
   msgs: OpenAI.Chat.Completions.ChatCompletionMessageParam[],
@@ -70,7 +71,7 @@ export class OpenAICompatModelClient implements ModelClient {
       { role: 'system', content: dialect.systemPrompt + '\n\n选区上下文:\n' + req.context },
       { role: 'user', content: req.intent },
     ];
-    // 非强制工具时(含思考模型降级):用提示消息把模型推向工具调用
+    // When the tool is not forced (incl. reasoning-model fallback): nudge the model toward a tool call with an extra message
     if (!forced) {
       messages.push({ role: 'user', content: `请只调用 ${dialect.toolName} 工具来完成上面的修改,不要用普通文字回答。` });
     }
@@ -93,7 +94,7 @@ export class OpenAICompatModelClient implements ModelClient {
     try {
       res = await this.callModel(req, dialect, this.forcedTool);
     } catch (e) {
-      // 思考模型(如 deepseek-v4-flash / reasoner)不支持强制 tool_choice → 自动降级重试
+      // Reasoning models (e.g. deepseek-v4-flash / reasoner) reject forced tool_choice → auto-fallback and retry
       const msg = e instanceof Error ? e.message : String(e);
       if (this.forcedTool && /tool_choice|thinking/i.test(msg)) {
         res = await this.callModel(req, dialect, false);
@@ -109,7 +110,7 @@ export class OpenAICompatModelClient implements ModelClient {
     return dialect.buildChangeSet(req, salvageProposalArgs(call.function.arguments));
   }
 
-  /** 组装 system + 多轮历史 + 当前指令的消息,以及工具菜单(改表 / answer_user / 只读取数 / 宿主追加)。 */
+  /** Assemble messages (system + multi-turn history + current instruction) and the tool menu (edit-proposal / answer_user / read-only data / host extras). */
   private buildCtx(req: ProposeRequest, dialect: HostDialect, opts?: RespondOptions): { messages: OpenAI.Chat.Completions.ChatCompletionMessageParam[]; tools: OpenAI.Chat.Completions.ChatCompletionTool[] } {
     const messages = normalizeMessages([
       { role: 'system', content: respondSystem(dialect, req) },
@@ -122,15 +123,15 @@ export class OpenAICompatModelClient implements ModelClient {
     ];
     return { messages, tools };
   }
-  /** 只读工具统一执行:先给 extraTools(如 load_skill)机会,再路由到 sheet/doc 取数。 */
+  /** Unified read-only tool execution: give extraTools (e.g. load_skill) first shot, then route to sheet/doc data reads. */
   private execTool(name: string, args: unknown, req: ProposeRequest, opts?: RespondOptions): string {
     const ex = opts?.extraTools?.exec(name, args);
     if (ex !== null && ex !== undefined) return ex;
     return execReadTool(name, (args ?? {}) as Record<string, unknown>, req);
   }
 
-  /** 智能路由 + 多步 loop:tool_choice:auto;模型可先调只读工具(read_range/aggregate)按需取数,再回答或改表。
-   *  改表提案产出后,若提供了 opts.verify 则跑一次影子校验;有问题就把重算结果/问题清单回喂,允许模型修正(propose→observe→repair)。 */
+  /** Smart routing + multi-step loop: tool_choice:auto; the model may first call read-only tools (read_range/aggregate) to fetch data on demand, then answer or propose edits.
+   *  After an edit proposal, if opts.verify is provided run a shadow validation; on failure feed the recomputed results/issue list back and let the model fix it (propose→observe→repair). */
   async respond(req: ProposeRequest, dialect: HostDialect, opts?: RespondOptions): Promise<AgentResponse> {
     const { messages, tools } = this.buildCtx(req, dialect, opts);
     let repairsLeft = opts?.maxRepairs ?? 1;
@@ -174,7 +175,7 @@ export class OpenAICompatModelClient implements ModelClient {
         return { kind: 'answer', text: (msg.content ?? '').trim() || EMPTY_RESULT_FALLBACK };
       }
 
-      // 只读工具:执行 + 把结果回喂,继续 loop
+      // Read-only tools: execute + feed results back, continue the loop
       messages.push(msg);
       for (const c of calls) {
         messages.push({ role: 'tool', tool_call_id: c.id, content: this.execTool(c.function.name, safeParse(c.function.arguments), req, opts) });
@@ -183,7 +184,7 @@ export class OpenAICompatModelClient implements ModelClient {
     return { kind: 'answer', text: TOO_MANY_STEPS_MSG };
   }
 
-  /** 流式版 respond:边生成边回调 reasoning(思考)/answer(正文)增量。多步 loop + 影子校验修复同 respond。 */
+  /** Streaming variant of respond: emits reasoning (chain-of-thought) / answer (body) deltas as they are generated. Same multi-step loop + shadow-validation repair as respond. */
   async respondStream(req: ProposeRequest, dialect: HostDialect, onEvent: (e: StreamEvent) => void, opts?: RespondOptions): Promise<AgentResponse> {
     const { messages, tools } = this.buildCtx(req, dialect, opts);
     let repairsLeft = opts?.maxRepairs ?? 1;
@@ -196,7 +197,7 @@ export class OpenAICompatModelClient implements ModelClient {
       for await (const chunk of stream) {
         const d = chunk.choices[0]?.delta;
         if (!d) continue;
-        const rc = (d as { reasoning_content?: string }).reasoning_content; // DeepSeek 等思考模型的思维链增量
+        const rc = (d as { reasoning_content?: string }).reasoning_content; // chain-of-thought deltas from reasoning models such as DeepSeek
         if (rc) onEvent({ type: 'reasoning', delta: rc });
         if (d.content) {
           content += d.content;
@@ -209,7 +210,7 @@ export class OpenAICompatModelClient implements ModelClient {
           if (tc.function?.name) acc.name = tc.function.name;
           if (tc.function?.arguments) {
             acc.args += tc.function.arguments;
-            // drawio:把改表提案的入参增量吐出,前端可边生成边在画板画出对应图形
+            // drawio: emit proposal-argument deltas so the frontend can draw the corresponding shapes on the canvas while generating
             if (dialect.format === 'drawio' && acc.name === dialect.toolName) onEvent({ type: 'draft', delta: tc.function.arguments });
           }
         }
@@ -260,7 +261,7 @@ export class OpenAICompatModelClient implements ModelClient {
         return result;
       }
 
-      // 只读工具:执行 + 回喂,继续 loop
+      // Read-only tools: execute + feed back, continue the loop
       messages.push({ role: 'assistant', content: content || null, tool_calls: calls.map((c) => ({ id: c.id, type: 'function' as const, function: { name: c.name, arguments: c.args } })) });
       for (const c of calls) {
         onEvent({ type: 'tool', name: c.name });

@@ -1,7 +1,7 @@
 /**
- * mxGraphModel 操作引擎:按 mxCell id 做 setProps/move/add/delete(级联删边和子节点)。
- * 思路照搬 DayuanJiang/next-ai-draw-io 的 applyDiagramOperations:解析成 cell 列表 → 按 id 命中改 → 序列化。
- * 仅处理【未压缩】的 .drawio(<root> 下是裸 mxCell);压缩图(deflateRaw+base64)留待加 pako。
+ * mxGraphModel operation engine: setProps/move/add/delete by mxCell id (delete cascades to edges and children).
+ * Approach mirrors applyDiagramOperations from DayuanJiang/next-ai-draw-io: parse into a cell list → edit matched cells by id → serialize.
+ * Handles only UNCOMPRESSED .drawio (bare mxCell under <root>); compressed diagrams (deflateRaw+base64) deferred until pako is added.
  */
 
 export interface DrawioObjectSpec {
@@ -17,7 +17,7 @@ export interface DrawioObjectSpec {
 }
 
 export type DrawioOp =
-  | { kind: 'setProps'; props: Record<string, string> } // value / style / … 属性
+  | { kind: 'setProps'; props: Record<string, string> } // value / style / … attributes
   | { kind: 'move'; box: { x?: number; y?: number; width?: number; height?: number } }
   | { kind: 'add'; spec: DrawioObjectSpec }
   | { kind: 'delete' };
@@ -49,7 +49,7 @@ const meta = (raw: string): Cell => ({
   raw,
 });
 
-/** 解析 <root> 内的 mxCell 列表(自闭合 + 带内容两种)。 */
+/** Parse the mxCell list inside <root> (both self-closing and content-bearing forms). */
 function parseCells(rootInner: string): Cell[] {
   const re = /<mxCell\b[^>]*\/>|<mxCell\b[^>]*>[\s\S]*?<\/mxCell>/g;
   const out: Cell[] = [];
@@ -59,20 +59,20 @@ function parseCells(rootInner: string): Cell[] {
 
 const serializeCells = (cells: Cell[]): string => cells.map((c) => c.raw).join('');
 
-/** 在单个标签串(到第一个 > 为止)上 set 属性:有则替换,无则插到 > / /> 前。 */
+/** Set an attribute on a single tag string (up to the first >): replace if present, else insert before > or />. */
 function setTagAttr(tag: string, name: string, val: string): string {
   const re = new RegExp(`(\\b${name}=")[^"]*(")`);
   if (re.test(tag)) return tag.replace(re, `$1${esc(val)}$2`);
   return tag.replace(/(\s*\/?>)\s*$/, ` ${name}="${esc(val)}"$1`);
 }
 
-/** 只改 mxCell 开标签(到第一个 >),保留内部 mxGeometry。 */
+/** Edit only the mxCell opening tag (up to the first >), preserving the inner mxGeometry. */
 function editOpenTag(raw: string, fn: (tag: string) => string): string {
   const gt = raw.indexOf('>') + 1;
   return fn(raw.slice(0, gt)) + raw.slice(gt);
 }
 
-/** 改内部 mxGeometry 的 x/y/width/height。 */
+/** Update x/y/width/height on the inner mxGeometry. */
 function setGeometry(raw: string, box: Record<string, number | undefined>): string {
   return raw.replace(/<mxGeometry\b[^>]*?\/?>/, (g) => {
     let t = g;
@@ -106,7 +106,7 @@ function collectDescendants(id: string, cells: Cell[], set: Set<string>): void {
   for (const c of cells) if (c.parent === id && !set.has(c.id)) collectDescendants(c.id, cells, set);
 }
 
-/** 把一组 edit 应用到 cell 列表(纯函数返回新列表)。 */
+/** Apply a batch of edits to the cell list (pure function; returns a new list). */
 export function applyEdits(cells: Cell[], edits: DrawioEdit[]): Cell[] {
   let arr = cells.slice();
   for (const ed of edits) {
@@ -140,7 +140,7 @@ export function applyEdits(cells: Cell[], edits: DrawioEdit[]): Cell[] {
   return arr;
 }
 
-/** 对一段 mxGraphModel XML 应用 edits(只重写 <root> 内容)。 */
+/** Apply edits to an mxGraphModel XML string (rewrites only the <root> content). */
 export function applyEditsToModel(model: string, edits: DrawioEdit[]): string {
   const m = /(<root\b[^>]*>)([\s\S]*?)(<\/root>)/.exec(model);
   if (!m) throw new Error('drawio: <root> not found (压缩图?请设 compressed=false)');

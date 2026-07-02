@@ -1,6 +1,6 @@
 /**
- * 端到端:自然语言意图 → ChangeSet(Mock 模型)→ Excel 外科写回真实结构 .xlsx。
- * 把"上游 Agent"和"下游写回"接成一条线,证明整条管线跑通。
+ * End-to-end: natural-language intent → ChangeSet (mock model) → surgical Excel writeback into a real .xlsx structure.
+ * Wires the upstream Agent and downstream writeback into one flow to prove the whole pipeline works.
  */
 import { test } from 'node:test';
 import assert from 'node:assert/strict';
@@ -32,7 +32,7 @@ function makeXlsx(): Uint8Array {
 }
 
 test('意图 → ChangeSet(Mock)→ 外科写回:B1 改为 99,其余部件字节级不变', async () => {
-  // Mock 模型:把"把 B1 改成 99"这类意图变成 setValue 提案
+  // Mock model: turns intents like "set B1 to 99" into a setValue proposal
   const agent = new Agent(
     new MockModelClient(() => ({ plan: '把 B1 改成 99', edits: [{ cell: 'Sheet1!B1', op: 'setValue', value: 99 }] })),
   );

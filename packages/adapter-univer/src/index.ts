@@ -1,15 +1,15 @@
 /**
- * UniverAdapter —— Excel 适配器(桩)。MVP 首发底座。
+ * UniverAdapter — Excel adapter (stub). Foundation for the MVP launch.
  *
- * 落地映射(待实现):
- *  - anchors():  Univer SelectionService 产出 {unitId, sheetId, A1} → LogicalAnchor;
- *                RefRangeService 注册区域,插行/删列自动平移 → rebase 的 'tracked' 态。
- *  - changes():  Facade getRange().setValue/setFormula;Command/Mutation 系统给 undo/redo;
- *                Node 同构 headless 实例做 shadowApply(fork 快照→应用→算 before/after)。
- *  - overlay():  在 Univer canvas 之上挂自建绝对定位 SVG 覆盖层(圈选/红笔/diff 高亮)。
- *  - writebacks(): 交给 @otterpatch/writeback-surgical(外科补丁)。
+ * Implementation mapping (to be built):
+ *  - anchors():  Univer SelectionService yields {unitId, sheetId, A1} → LogicalAnchor;
+ *                register ranges with RefRangeService so row/column insert/delete auto-shifts them → the 'tracked' rebase state.
+ *  - changes():  Facade getRange().setValue/setFormula; the Command/Mutation system provides undo/redo;
+ *                a Node isomorphic headless instance performs shadowApply (fork snapshot → apply → compute before/after).
+ *  - overlay():  mount a custom absolutely-positioned SVG overlay on top of the Univer canvas (lasso selection / red-pen / diff highlight).
+ *  - writebacks(): delegated to @otterpatch/writeback-surgical (surgical patching).
  *
- * 详见 .work/abstraction-layer.md §5、§9(MVP 最小子集)。
+ * See .work/abstraction-layer.md §5 and §9 (MVP minimal subset).
  */
 import type {
   AdapterRegistration,
@@ -57,7 +57,7 @@ export class UniverAdapter implements HostAdapter {
   // support the adapter doesn't have. Implement the interface when the feature lands.
 }
 
-/** 注册项:把 Excel(Univer)接入 AdapterRegistry。app 启动时 registry.register(univerAdapterRegistration)。 */
+/** Registration entry: plugs Excel (Univer) into the AdapterRegistry. Call registry.register(univerAdapterRegistration) at app startup. */
 export const univerAdapterRegistration: AdapterRegistration = {
   format: 'excel',
   engines: ['univer'],

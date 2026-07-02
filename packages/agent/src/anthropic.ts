@@ -1,10 +1,11 @@
 /**
- * AnthropicModelClient —— 真实 Claude(BYOK)。
- * proposeChangeSet:forced tool 强制产出受约束 ChangeSet(确定要改表/测试)。
- * respond / respondStream:与 OpenAI 兼容通道同构的多步 agentic loop ——
- *   answer_user 路由 + read_range/aggregate 按需取数 + 影子校验 propose→observe→repair,
- *   让默认 Claude 通道不再"最强模型最瞎"。共享件见 ./sheet-tools。
- * 默认模型 claude-opus-4-8;apiKey 省略时读 ANTHROPIC_API_KEY;中国线可换 baseURL。
+ * AnthropicModelClient — real Claude (BYOK).
+ * proposeChangeSet: forced tool call producing a constrained ChangeSet (when a sheet edit is certain / for tests).
+ * respond / respondStream: multi-step agentic loop, isomorphic to the OpenAI-compatible channel —
+ *   answer_user routing + on-demand data fetching via read_range/aggregate + shadow verification
+ *   (propose→observe→repair), so the default Claude channel is no longer "strongest model, blindest".
+ *   Shared pieces live in ./sheet-tools.
+ * Default model claude-opus-4-8; if apiKey is omitted, reads ANTHROPIC_API_KEY; baseURL can be overridden for China routes.
  */
 import Anthropic from '@anthropic-ai/sdk';
 import type { ChangeSet } from '@otterpatch/core';
@@ -16,13 +17,13 @@ import { salvageProposalArgs, salvageText } from './json-salvage.js';
 const safeJson = (s?: string): Record<string, unknown> => { try { return s ? (JSON.parse(s) as Record<string, unknown>) : {}; } catch { return {}; } };
 
 export interface AnthropicOptions {
-  apiKey?: string; // 省略 → 读 ANTHROPIC_API_KEY(BYOK)
-  model?: string; // 默认 claude-opus-4-8
-  baseURL?: string; // 中国线/代理可覆盖
+  apiKey?: string; // omitted → reads ANTHROPIC_API_KEY (BYOK)
+  model?: string; // default claude-opus-4-8
+  baseURL?: string; // override for China routes / proxies
   maxTokens?: number;
 }
 
-/** 归一化历史:丢空、并相邻同角色、去掉开头的 assistant(Anthropic 要求 user 起头、角色交替)。 */
+/** Normalize history: drop empties, merge adjacent same-role messages, strip leading assistant turns (Anthropic requires user-first, alternating roles). */
 function normalizeMessages(msgs: Anthropic.MessageParam[]): Anthropic.MessageParam[] {
   const out: Anthropic.MessageParam[] = [];
   for (const m of msgs) {
@@ -53,7 +54,7 @@ export class AnthropicModelClient implements ModelClient {
     const defs = [{ name: dialect.toolName, description: dialect.toolDescription, parameters: dialect.parameters }, ...auxToolDefs(!!req.sheet, !!req.doc), ...(opts?.extraTools?.defs ?? [])];
     return defs.map((d) => ({ name: d.name, description: d.description, input_schema: d.parameters as unknown as Anthropic.Tool['input_schema'] }));
   }
-  /** 只读工具统一执行:先给 extraTools(如 load_skill)机会,再路由到 sheet/doc 取数。 */
+  /** Unified read-only tool execution: give extraTools (e.g. load_skill) first shot, then route to sheet/doc data fetching. */
   private execTool(name: string, input: unknown, req: ProposeRequest, opts?: RespondOptions): string {
     const ex = opts?.extraTools?.exec(name, input);
     if (ex !== null && ex !== undefined) return ex;
@@ -65,8 +66,8 @@ export class AnthropicModelClient implements ModelClient {
       { role: 'user', content: req.intent },
     ]);
   }
-  /** system 拆两块并挂 prompt cache 断点:stable(方言+技能,跨轮不变)+ volatile(本轮文档快照)。
-   *  断点打在 volatile 末尾 → 同一轮的多步 loop(取数/修复,最多 8 步)每步都命中整段 system 缓存;跨轮至少命中 stable。 */
+  /** Split system into two blocks with prompt-cache breakpoints: stable (dialect + skills, unchanged across turns) + volatile (this turn's document snapshot).
+   *  Breakpoint at the end of volatile → every step of this turn's multi-step loop (data fetch/repair, up to 8 steps) hits the full system cache; across turns at least stable hits. */
   private systemBlocks(req: ProposeRequest, dialect: HostDialect): Array<Anthropic.TextBlockParam> {
     const p = respondSystemParts(dialect, req);
     return [
@@ -91,7 +92,7 @@ export class AnthropicModelClient implements ModelClient {
     return dialect.buildChangeSet(req, block.input);
   }
 
-  /** 智能路由 + 多步 loop:answer_user / read_range / aggregate;提案后影子校验,不通过则回喂修正(propose→observe→repair)。 */
+  /** Smart routing + multi-step loop: answer_user / read_range / aggregate; shadow-verify proposals and feed failures back for repair (propose→observe→repair). */
   async respond(req: ProposeRequest, dialect: HostDialect, opts?: RespondOptions): Promise<AgentResponse> {
     const system = this.systemBlocks(req, dialect);
     const tools = this.toolset(req, dialect, opts);
@@ -134,14 +135,14 @@ export class AnthropicModelClient implements ModelClient {
         return { kind: 'answer', text: text.trim() || EMPTY_RESULT_FALLBACK };
       }
 
-      // 只读工具:回显 assistant 内容 + 逐 tool_result,继续 loop
+      // Read-only tools: echo assistant content + one tool_result each, continue the loop
       messages.push({ role: 'assistant', content: assistantBlocks(text, toolUses) });
       messages.push({ role: 'user', content: toolUses.map((b) => ({ type: 'tool_result' as const, tool_use_id: b.id, content: this.execTool(b.name, b.input, req, opts) })) });
     }
     return { kind: 'answer', text: TOO_MANY_STEPS_MSG };
   }
 
-  /** 流式版 respond:文本增量回调 answer(扩展思考开启时回调 reasoning)。多步 loop + 影子校验同 respond。 */
+  /** Streaming variant of respond: emits answer deltas for text (and reasoning deltas when extended thinking is on). Multi-step loop + shadow verification same as respond. */
   async respondStream(req: ProposeRequest, dialect: HostDialect, onEvent: (e: StreamEvent) => void, opts?: RespondOptions): Promise<AgentResponse> {
     const system = this.systemBlocks(req, dialect);
     const tools = this.toolset(req, dialect, opts);
@@ -230,7 +231,7 @@ export class AnthropicModelClient implements ModelClient {
   }
 }
 
-/** 重建 assistant 内容块(可选前导文本 + 各 tool_use),供回喂时与 tool_result 配对。 */
+/** Rebuild assistant content blocks (optional leading text + each tool_use) so they pair with tool_results when fed back. */
 function assistantBlocks(text: string, toolUses: Array<{ id: string; name: string; input: unknown }>): Anthropic.ContentBlockParam[] {
   const blocks: Anthropic.ContentBlockParam[] = [];
   if (text.trim()) blocks.push({ type: 'text', text });
