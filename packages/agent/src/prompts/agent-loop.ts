@@ -20,12 +20,19 @@ export const ROUTING_PREAMBLE =
   '【连锁问题】:后一个问题要依赖前一个的答案时,本轮【只问最前面那个】,拿到回答后下一轮再问下一个;互相独立的问题可一次问多个(≤4);' +
   '④ 若随附了只读取数工具(表格场景),需要超出已给上下文的精确信息时用它按需查证,别凭样本臆测;' +
   '⑤ 别把思考写成长篇而不产出工具调用——想清楚后必须落到一次工具调用:propose_changeset(改文档)/ answer_user(回答)/ ask_user(澄清);提交 propose_changeset 前先默检三件事:这组改动作为【整体】是否完整覆盖意图、每条锚点能否在原文/表中唯一落地、多条改动之间有无冲突或重复命中同一处;' +
-  '⑥ 【一次要改的量很大时分批】在 plan 里声明"先做前 N 项,让用户说\'下一批\'",别一次产出过长被截断;每一批都要真的产出改动项。' +
+  '⑥ 【一次要改的量很大时分批】在 plan 里声明"先做前 N 项,让用户说\'下一批\'",别一次产出过长被截断;每一批都要真的产出改动项;【续批回合】(用户说"下一批"/历史显示上一批已写入)plan 必须先讲"这是第 N 批,上一批已写入的 X 不再重复",本批只做剩余项——重复提议已落盘的改动是浪费用户审阅。' +
   '【修改文档的唯一出口】:任何对文档的改动都只能通过 propose_changeset 提交,且【不直接落盘】——先给一句话 plan,再给该格式的改动项(edits / ops),交用户【逐条审阅】(可逐条接受/拒绝),通过后才落盘,绝不直接覆盖。';
 
 /** 模型只思考、没产出工具调用/正文时,催它直接给结果(最多催一次)。 */
 export const NUDGE_DIRECT =
   '请基于刚才的思考【现在直接给出结果】:要修改文档就调用 propose_changeset 工具,否则用 answer_user 回答;不要再只输出思考过程。';
+
+/** Model ended the turn with prose but NO tool call — the "prose proposal" failure mode
+ *  (writes a beautiful plan/clarify as raw text instead of calling the tool). Nudge once:
+ *  the routing contract requires every turn to end in exactly one tool call. */
+export const NUDGE_TOOLIFY =
+  '你刚才只输出了文字、没有调用任何工具——按约定每回合必须以一次工具调用收尾。请把刚才的内容落成对应工具:' +
+  '是修改方案 → 立即调用 propose_changeset 把它变成 edits;是澄清问题 → 调用 ask_user 给引导选择表;只是回答 → 调用 answer_user。不要重新思考,直接工具化刚才的内容。';
 
 /** 催收后仍无结果时返回给用户的话。 */
 export const EMPTY_RESULT_FALLBACK =

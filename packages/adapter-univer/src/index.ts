@@ -16,16 +16,8 @@ import type {
   AnchorService,
   ChangeSetEngine,
   CapabilitySet,
-  DocProjection,
-  DocRev,
   HostAdapter,
   HostMeta,
-  MutationLog,
-  OverlayPort,
-  PartRef,
-  ProjectionQuery,
-  ShadowDoc,
-  Unsubscribe,
   WritebackBackend,
 } from '@otterpatch/core';
 import { SurgicalOoxmlWriteback } from '@otterpatch/writeback-surgical';
@@ -53,34 +45,16 @@ export class UniverAdapter implements HostAdapter {
   changes(): ChangeSetEngine {
     return new GridChangeSetEngine();
   }
-  project(_q: ProjectionQuery): Promise<DocProjection> {
-    return TODO('project');
-  }
   writebacks(): readonly WritebackBackend[] {
-    // 真实写回:外科补丁 + Excel(xlsx)的 ChangeSet→部件编译器
+    // Real write-back: surgical OOXML patch + the xlsx ChangeSet→part compiler.
     return [new SurgicalOoxmlWriteback(buildXlsxCompiler())];
-  }
-  overlay(): OverlayPort {
-    return TODO('overlay');
-  }
-  createShadow(_scope: PartRef): Promise<ShadowDoc> {
-    return TODO('createShadow');
-  }
-  observeMutations(
-    _scope: PartRef,
-    _cb: (log: MutationLog, rev: DocRev) => void,
-  ): Unsubscribe {
-    return TODO('observeMutations');
-  }
-  rev(_scope: PartRef): DocRev {
-    return TODO('rev');
-  }
-  onAdvance(_cb: (rev: DocRev) => void): Unsubscribe {
-    return TODO('onAdvance');
   }
   dispose(): void {
     /* no-op */
   }
+  // Optional capabilities (ProjectionCapability / ShadowCapability / LiveDocCapability /
+  // OverlayCapability) are intentionally NOT declared: throwing TODO stubs would advertise
+  // support the adapter doesn't have. Implement the interface when the feature lands.
 }
 
 /** 注册项:把 Excel(Univer)接入 AdapterRegistry。app 启动时 registry.register(univerAdapterRegistration)。 */

@@ -15,16 +15,8 @@ import type {
   AnchorService,
   CapabilitySet,
   ChangeSetEngine,
-  DocProjection,
-  DocRev,
   HostAdapter,
   HostMeta,
-  MutationLog,
-  OverlayPort,
-  PartRef,
-  ProjectionQuery,
-  ShadowDoc,
-  Unsubscribe,
   WritebackBackend,
 } from '@otterpatch/core';
 import { DrawioSurgicalWriteback } from './writeback.js';
@@ -50,30 +42,14 @@ export class DrawioAdapter implements HostAdapter {
   changes(): ChangeSetEngine {
     return TODO('changes');
   }
-  project(_q: ProjectionQuery): Promise<DocProjection> {
-    return TODO('project');
-  }
   writebacks(): readonly WritebackBackend[] {
     return [new DrawioSurgicalWriteback()];
-  }
-  overlay(): OverlayPort {
-    return TODO('overlay');
-  }
-  createShadow(_scope: PartRef): Promise<ShadowDoc> {
-    return TODO('createShadow');
-  }
-  observeMutations(_scope: PartRef, _cb: (log: MutationLog, rev: DocRev) => void): Unsubscribe {
-    return TODO('observeMutations');
-  }
-  rev(_scope: PartRef): DocRev {
-    return TODO('rev');
-  }
-  onAdvance(_cb: (rev: DocRev) => void): Unsubscribe {
-    return TODO('onAdvance');
   }
   dispose(): void {
     /* no-op */
   }
+  // Optional capabilities are intentionally not declared — no throwing stubs advertising
+  // support that doesn't exist. Implement Projection/Shadow/LiveDoc/Overlay when they land.
 }
 
 /** 注册项:把 drawio 接入 AdapterRegistry。app 启动时 registry.register(drawioAdapterRegistration)。 */

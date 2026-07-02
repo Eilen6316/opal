@@ -39,8 +39,16 @@ export type PixelSelection = {
   polygon?: Array<{ x: number; y: number }>;
   modifier?: 'add' | 'subtract';
 };
-/** 底座 Mutation/Step 序列,rebase 的输入。 */
-export type MutationLog = unknown[];
+/** One host mutation (edit step) as observed by an adapter — the unit anchors get rebased over.
+ *  The envelope (kind/rev/part) is the cross-adapter contract; `payload` stays host-opaque. */
+export interface MutationRecord {
+  kind: string; // host op name, e.g. 'set-range-values' / 'insert-rows' / 'replace-text'
+  rev: DocRev; // document revision this mutation produced
+  part?: string; // sheet / slide / flow it touched
+  payload?: unknown; // host-native detail, opaque to core
+}
+/** Host mutation/step sequence — the input to rebase. */
+export type MutationLog = readonly MutationRecord[];
 export type Unsubscribe = () => void;
 
 export interface ResolvedAnchor {

@@ -157,6 +157,16 @@ function startOf(a1: string): { c: number; r: number } {
   return { c: m ? colIndex(m[1]!) : 0, r: m ? parseInt(m[2]!, 10) - 1 : 0 };
 }
 
+/** Render a cell value for the model. Type honesty matters: a text cell holding "71" must be
+ *  visibly different from the number 71 — Excel's SUM silently skips text, so hiding the type
+ *  here caused real missed-anomaly failures in bench (x-sum). Numeric-looking strings get quoted
+ *  and flagged. */
+function cellRepr(v: unknown): string {
+  if (v == null || v === '') return '(空)';
+  if (typeof v === 'string' && v.trim() !== '' && Number.isFinite(Number(v))) return `"${v}"(文本数字⚠SUM会漏加)`;
+  return String(v);
+}
+
 /** 从整表全量数据里读任意 A1 区域,返回带引用的文本。 */
 export function readRange(sheet: SheetData, query: string): string {
   const s = startOf(sheet.a1);
@@ -177,8 +187,7 @@ export function readRange(sheet: SheetData, query: string): string {
     if (!row) continue;
     const cells: string[] = [];
     for (let c = c0; c <= c1; c++) {
-      const v = row[c - s.c];
-      cells.push(`${colLetter(c)}${r + 1}=${v == null || v === '' ? '(空)' : String(v)}`);
+      cells.push(`${colLetter(c)}${r + 1}=${cellRepr(row[c - s.c])}`);
     }
     lines.push(cells.join('  '));
   }

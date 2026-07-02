@@ -10,7 +10,7 @@ import Anthropic from '@anthropic-ai/sdk';
 import type { ChangeSet } from '@otterpatch/core';
 import type { AgentResponse, HostDialect, ModelClient, ProposeRequest, RespondOptions, StreamEvent } from './model.js';
 import { STEP_LIMIT, TOO_MANY_STEPS_MSG, auxToolDefs, execReadTool, parseClarify, recentHistory, respondSystemParts } from './sheet-tools.js';
-import { NUDGE_DIRECT, EMPTY_RESULT_FALLBACK, TRUNCATED_FALLBACK } from './prompts/index.js';
+import { NUDGE_DIRECT, NUDGE_TOOLIFY, EMPTY_RESULT_FALLBACK, TRUNCATED_FALLBACK } from './prompts/index.js';
 import { salvageProposalArgs, salvageText } from './json-salvage.js';
 
 const safeJson = (s?: string): Record<string, unknown> => { try { return s ? (JSON.parse(s) as Record<string, unknown>) : {}; } catch { return {}; } };
@@ -104,7 +104,10 @@ export class AnthropicModelClient implements ModelClient {
       const text = res.content.filter((b): b is Anthropic.TextBlock => b.type === 'text').map((b) => b.text).join('');
       const toolUses = res.content.filter((b): b is Anthropic.ToolUseBlock => b.type === 'tool_use');
       if (!toolUses.length) {
-        if (!text.trim() && !nudged) { nudged = true; messages.push({ role: 'assistant', content: '(已完成思考)' }); messages.push({ role: 'user', content: NUDGE_DIRECT }); continue; }
+        // No tool call this turn: empty text → nudge to produce a result; non-empty prose →
+        // "prose proposal" failure mode, nudge once to toolify it (routing contract: every
+        // turn must end in exactly one tool call).
+        if (!nudged) { nudged = true; messages.push({ role: 'assistant', content: text.trim() || '(已完成思考)' }); messages.push({ role: 'user', content: text.trim() ? NUDGE_TOOLIFY : NUDGE_DIRECT }); continue; }
         return { kind: 'answer', text: text.trim() || EMPTY_RESULT_FALLBACK };
       }
 
@@ -173,7 +176,8 @@ export class AnthropicModelClient implements ModelClient {
       const toolUses = Object.values(acc).map((a) => ({ id: a.id, name: a.name, input: safeJson(a.json), json: a.json }));
 
       if (!toolUses.length) {
-        if (!text.trim() && !nudged) { nudged = true; messages.push({ role: 'assistant', content: '(已完成思考)' }); messages.push({ role: 'user', content: NUDGE_DIRECT }); continue; }
+        // Same guard as respond(): toolify prose finals once, nudge empty finals once.
+        if (!nudged) { nudged = true; messages.push({ role: 'assistant', content: text.trim() || '(已完成思考)' }); messages.push({ role: 'user', content: text.trim() ? NUDGE_TOOLIFY : NUDGE_DIRECT }); continue; }
         const result: AgentResponse = { kind: 'answer', text: text.trim() || EMPTY_RESULT_FALLBACK };
         onEvent({ type: 'done', result });
         return result;

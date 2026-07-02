@@ -204,7 +204,7 @@ function inverseOf(before: GridCell): EditOp {
   return { family: 'value', kind: 'setValue', value: before.value ?? null };
 }
 
-export class GridChangeSetEngine implements ChangeSetEngine {
+export class GridChangeSetEngine implements ChangeSetEngine<GridShadow> {
   validate(cs: ChangeSet, caps: CapabilitySet): ValidationReport {
     const issues: ValidationReport['issues'] = [];
     for (const e of cs.edits) {
@@ -217,8 +217,8 @@ export class GridChangeSetEngine implements ChangeSetEngine {
     return { ok: issues.length === 0, issues };
   }
 
-  async shadowApply(cs: ChangeSet, shadow: ShadowDoc): Promise<ShadowResult> {
-    const grid = shadow as GridShadow;
+  async shadowApply(cs: ChangeSet, shadow: GridShadow): Promise<ShadowResult> {
+    const grid = shadow; // typed via ChangeSetEngine<GridShadow> — no cast needed
     const capturedInverse: Record<EditId, EditOp> = {};
     const children: DiffNode[] = [];
     let firstAnchor: LogicalAnchor | undefined;
